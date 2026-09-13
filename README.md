@@ -118,32 +118,32 @@ Indexes:
 
 ### 애플리케이션
 
-| 구분 | 기술 | 버전 |
-|---|---|---|
-| 언어 | Java (Eclipse Temurin) | 25.0.4 LTS |
-| 프레임워크 | Spring Boot | 4.1.1 |
-| AI 통합 | Spring AI | 2.0.1 |
-| 빌드 도구 | Gradle | - |
-| 웹 | Spring WebMVC (내장 Tomcat 11.0.24) | - |
+| 구분       | 기술                                | 버전       |
+| ---------- | ----------------------------------- | ---------- |
+| 언어       | Java (Eclipse Temurin)              | 25.0.4 LTS |
+| 프레임워크 | Spring Boot                         | 4.1.1      |
+| AI 통합    | Spring AI                           | 2.0.1      |
+| 빌드 도구  | Gradle                              | -          |
+| 웹         | Spring WebMVC (내장 Tomcat 11.0.24) | -          |
 
 ### 인프라
 
-| 구분 | 기술 | 버전/설정 |
-|---|---|---|
-| 벡터 DB | PostgreSQL + pgvector | pgvector/pgvector:pg17 |
-| 컨테이너 | Docker Desktop (WSL2 백엔드) | - |
-| LLM 런타임 | Ollama | - |
-| 커넥션 풀 | HikariCP | 7.0.2 |
-| JDBC 드라이버 | PostgreSQL JDBC | 42.7.13 |
-| 벡터 바인딩 | pgvector-java | 0.1.6 |
+| 구분          | 기술                         | 버전/설정              |
+| ------------- | ---------------------------- | ---------------------- |
+| 벡터 DB       | PostgreSQL + pgvector        | pgvector/pgvector:pg17 |
+| 컨테이너      | Docker Desktop (WSL2 백엔드) | -                      |
+| LLM 런타임    | Ollama                       | -                      |
+| 커넥션 풀     | HikariCP                     | 7.0.2                  |
+| JDBC 드라이버 | PostgreSQL JDBC              | 42.7.13                |
+| 벡터 바인딩   | pgvector-java                | 0.1.6                  |
 
 ### 모델
 
-| 용도 | 모델 | 크기 | 차원 |
-|---|---|---|---|
-| 임베딩 | `bge-m3` | 약 1.2GB | 1024 |
-| 답변 생성 | `gemma2:9b` | 약 5.4GB | - |
-| 답변 생성 (대안) | `exaone3.5:7.8b` | 약 4.8GB | - |
+| 용도             | 모델             | 크기     | 차원 |
+| ---------------- | ---------------- | -------- | ---- |
+| 임베딩           | `bge-m3`         | 약 1.2GB | 1024 |
+| 답변 생성        | `gemma2:9b`      | 약 5.4GB | -    |
+| 답변 생성 (대안) | `exaone3.5:7.8b` | 약 4.8GB | -    |
 
 ### 주요 설정값
 
@@ -231,12 +231,12 @@ RAG는 **주어진 문서에 충실한 답변**이 목적이므로 낮게 잡았
 
 ### 1단계: 개발 환경 구성
 
-| 항목 | 내용 |
-|---|---|
-| JDK | Temurin 25.0.4 LTS (`JAVA_HOME` 설정 확인) |
-| Git | 2.55.0 |
-| Docker Desktop | WSL2 백엔드, 디스크 이미지 위치를 D 드라이브로 변경 |
-| Ollama | `OLLAMA_MODELS` 환경변수를 `D:\ollama\models`로 변경 |
+| 항목           | 내용                                                 |
+| -------------- | ---------------------------------------------------- |
+| JDK            | Temurin 25.0.4 LTS (`JAVA_HOME` 설정 확인)           |
+| Git            | 2.55.0                                               |
+| Docker Desktop | WSL2 백엔드, 디스크 이미지 위치를 D 드라이브로 변경  |
+| Ollama         | `OLLAMA_MODELS` 환경변수를 `D:\ollama\models`로 변경 |
 
 모델과 컨테이너 이미지가 수 GB 단위라, **설치 직후 저장 경로를 별도 드라이브로 옮기는 작업**을 먼저 했습니다. 모델을 받은 뒤에 경로를 바꾸면 다시 받아야 하므로 순서가 중요합니다.
 
