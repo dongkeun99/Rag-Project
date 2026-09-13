@@ -1,0 +1,28 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/ragdb
+    username: ${DB_USERNAME:raguser}
+    password: ${DB_PASSWORD:ragpass}
+    driver-class-name: org.postgresql.Driver
+
+  ai:
+    ollama:
+      base-url: http://localhost:11434
+      chat:
+        options:
+          model: gemma2:9b
+          temperature: 0.3
+      embedding:
+        options:
+          model: bge-m3
+
+    vectorstore:
+      pgvector:
+        initialize-schema: true
+        dimensions: 1024
+        index-type: HNSW
+        distance-type: COSINE_DISTANCE
+
+logging:
+  level:
+    org.springframework.ai: INFO
