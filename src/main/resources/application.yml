@@ -10,8 +10,10 @@ spring:
       base-url: http://localhost:11434
       chat:
         options:
-          model: gemma2:9b
-          temperature: 0.3
+          model: exaone3.5:2.4b
+          temperature: 0.2
+          num-predict: 300
+          num-ctx: 4096
       embedding:
         options:
           model: bge-m3
@@ -26,3 +28,10 @@ spring:
 logging:
   level:
     org.springframework.ai: INFO
+
+rag:
+  docs-path: D:/dev/rag-docs
+  top-k: 3
+  similarity-threshold: 0.40
+  chunk-size: 250
+  min-chunk-size-chars: 120

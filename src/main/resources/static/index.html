@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>문서 질의</title>
+    <style>
+        :root {
+            --bg: #EDEDE8;
+            --surface: #FFFFFF;
+            --ink: #1A1D1A;
+            --muted: #6B6F6A;
+            --rule: #D3D5CC;
+            --signal: #2F5D50;
+            --signal-soft: #C9D6D0;
+            --alert: #A33A2A;
+            --radius: 3px;
+        }
+
+        * { box-sizing: border-box; }
+
+        html { -webkit-text-size-adjust: 100%; }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--ink);
+            font-family: system-ui, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+            font-size: 16px;
+            line-height: 1.6;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .wrap {
+            max-width: 47rem;
+            margin: 0 auto;
+            padding: 2.5rem 2.25rem 5rem;
+        }
+
+        /* ---------- 머리말 ---------- */
+        header {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: .5rem 1rem;
+            padding-bottom: .75rem;
+            border-bottom: 1px solid var(--ink);
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 1.375rem;
+            font-weight: 600;
+            letter-spacing: -.01em;
+        }
+
+        #corpus {
+            margin: 0;
+            font-size: .875rem;
+            color: var(--muted);
+        }
+
+        /* ---------- 질문 ---------- */
+        form {
+            display: flex;
+            gap: .625rem;
+            align-items: flex-end;
+            margin: 1.75rem 0 0;
+        }
+
+        textarea {
+            flex: 1;
+            min-height: 3.25rem;
+            padding: .75rem .875rem;
+            border: 1px solid var(--rule);
+            border-radius: var(--radius);
+            background: var(--surface);
+            color: inherit;
+            font: inherit;
+            font-size: 1.0625rem;
+            line-height: 1.5;
+            resize: vertical;
+        }
+
+        textarea:focus-visible,
+        button:focus-visible,
+        .cite:focus-visible,
+        summary:focus-visible {
+            outline: 2px solid var(--signal);
+            outline-offset: 2px;
+        }
+
+        button {
+            flex: none;
+            padding: .8125rem 1.25rem;
+            border: 1px solid var(--signal);
+            border-radius: var(--radius);
+            background: var(--signal);
+            color: #fff;
+            font: inherit;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        button:hover:not(:disabled) { background: #26493F; }
+
+        button:disabled {
+            background: var(--muted);
+            border-color: var(--muted);
+            cursor: default;
+        }
+
+        /* ---------- 상태 ---------- */
+        #status {
+            margin: 1rem 0 0;
+            font-size: .9375rem;
+            color: var(--muted);
+            min-height: 1.5rem;
+        }
+
+        #status.error { color: var(--alert); }
+
+        /* ---------- 답변 ---------- */
+        .block { margin-top: 2rem; }
+
+        .block[hidden] { display: none; }
+
+        h2 {
+            margin: 0;
+            font-size: .9375rem;
+            font-weight: 600;
+            color: var(--muted);
+        }
+
+        .block > h2 { margin-bottom: .75rem; }
+
+        .sources-head {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: .5rem 1rem;
+        }
+
+        .nav {
+            display: flex;
+            align-items: center;
+            gap: .375rem;
+        }
+
+        .nav button {
+            padding: .3125rem .6875rem;
+            background: transparent;
+            border-color: var(--rule);
+            color: var(--ink);
+            font-size: .8125rem;
+            font-weight: 500;
+        }
+
+        .nav button:hover:not(:disabled) { background: var(--surface); }
+
+        .nav button:disabled {
+            background: transparent;
+            border-color: var(--rule);
+            color: #A8ABA4;
+        }
+
+        #counter {
+            min-width: 3rem;
+            text-align: center;
+            color: var(--muted);
+            font-size: .8125rem;
+        }
+
+        #threshold-note {
+            margin: .5rem 0 .25rem;
+            color: var(--muted);
+            font-size: .8125rem;
+        }
+
+        #answer {
+            padding: 1.25rem 1.375rem;
+            background: var(--surface);
+            border-left: 3px solid var(--signal);
+            border-radius: 0 var(--radius) var(--radius) 0;
+            font-size: 1.0625rem;
+            line-height: 1.75;
+            white-space: pre-wrap;
+        }
+
+        #answer.notfound { border-left-color: var(--alert); }
+
+        .cite {
+            padding: 0 .1875rem;
+            border: 0;
+            border-radius: 2px;
+            background: var(--signal-soft);
+            color: var(--signal);
+            font: inherit;
+            font-weight: 600;
+            font-size: .875em;
+            cursor: pointer;
+        }
+
+        .cite:hover { background: var(--signal); color: #fff; }
+
+        /* ---------- 근거 ---------- */
+        #sources {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+
+        #sources li {
+            margin: 0 -1rem;
+            padding: 1rem 1rem 1.125rem;
+            border-top: 1px solid var(--rule);
+        }
+
+        #sources li:last-child { border-bottom: 1px solid var(--rule); }
+
+        #sources li.active { background: #FAFAF6; box-shadow: inset 3px 0 0 var(--signal); }
+
+        #sources li:hover { background: #FAFAF7; cursor: pointer; }
+
+        .meta {
+            display: flex;
+            align-items: baseline;
+            gap: .625rem;
+            font-size: .9375rem;
+        }
+
+        .num {
+            flex: none;
+            width: 1.375rem;
+            color: var(--muted);
+            font-weight: 600;
+        }
+
+        .file {
+            flex: 1;
+            min-width: 0;
+            overflow-wrap: break-word;
+            font-weight: 600;
+        }
+
+        .score { flex: none; font-weight: 600; }
+
+        /* 점수 막대 — 이 화면의 핵심. 기준선 대비 여유를 보여준다. */
+        .gauge {
+            position: relative;
+            height: 5px;
+            margin: .75rem 0 .875rem 2rem;
+            background: #E2E4DC;
+            border-radius: 999px;
+        }
+
+        .gauge .fill {
+            height: 100%;
+            background: var(--signal);
+            border-radius: 999px;
+        }
+
+        .gauge .mark {
+            position: absolute;
+            top: -4px;
+            bottom: -4px;
+            width: 1px;
+            background: var(--ink);
+        }
+
+        .excerpt {
+            margin: 0 0 0 2rem;
+            color: #40453F;
+            font-size: .9375rem;
+            line-height: 1.7;
+        }
+
+        /* ---------- 문서 관리 ---------- */
+        details {
+            margin-top: 3rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--rule);
+            font-size: .9375rem;
+        }
+
+        summary { cursor: pointer; color: var(--muted); }
+
+        #files {
+            margin: 1rem 0;
+            padding: 0;
+            list-style: none;
+            color: var(--muted);
+        }
+
+        #files li {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            padding: .25rem 0;
+        }
+
+        .tools { display: flex; flex-wrap: wrap; gap: .5rem; }
+
+        .tools button {
+            padding: .5rem .875rem;
+            background: transparent;
+            border-color: var(--rule);
+            color: var(--ink);
+            font-weight: 500;
+            font-size: .875rem;
+        }
+
+        .tools button:hover:not(:disabled) { background: var(--surface); }
+
+        #ingest-result {
+            margin: .75rem 0 0;
+            color: var(--muted);
+            font-size: .875rem;
+            white-space: pre-wrap;
+        }
+
+        @media (max-width: 34rem) {
+            .wrap { padding-top: 1.75rem; }
+            form { flex-direction: column; align-items: stretch; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            * { transition: none !important; }
+        }
+    </style>
+</head>
+<body>
+<div class="wrap">
+
+    <header>
+        <h1>문서 질의</h1>
+        <p id="corpus">문서 정보를 불러오는 중</p>
+    </header>
+
+    <form id="ask-form">
+    <textarea id="question" rows="2"
+              placeholder="적재한 문서에 대해 물어보세요. 예) 실행환경의 다섯 가지 서비스 그룹이 뭔가요?"></textarea>
+        <button type="submit" id="submit">질문하기</button>
+    </form>
+
+    <p id="status"></p>
+
+    <section class="block" id="answer-block" hidden>
+        <h2>답변</h2>
+        <div id="answer"></div>
+    </section>
+
+    <section class="block" id="sources-block" hidden>
+        <div class="sources-head">
+            <h2 id="sources-title">근거</h2>
+            <div class="nav">
+                <button type="button" id="prev">이전</button>
+                <span id="counter">0 / 0</span>
+                <button type="button" id="next">다음</button>
+            </div>
+        </div>
+        <p id="threshold-note"></p>
+        <ol id="sources"></ol>
+    </section>
+
+    <details id="manage">
+        <summary>적재된 문서</summary>
+        <ul id="files"></ul>
+        <div class="tools">
+            <button type="button" id="reload">새 문서 읽기</button>
+            <button type="button" id="reload-force">전체 다시 읽기</button>
+        </div>
+        <p id="ingest-result"></p>
+    </details>
+
+</div>
+
+<script>
+    (function () {
+        "use strict";
+
+        var els = {
+            corpus: document.getElementById("corpus"),
+            form: document.getElementById("ask-form"),
+            question: document.getElementById("question"),
+            submit: document.getElementById("submit"),
+            status: document.getElementById("status"),
+            answerBlock: document.getElementById("answer-block"),
+            answer: document.getElementById("answer"),
+            sourcesBlock: document.getElementById("sources-block"),
+            sourcesTitle: document.getElementById("sources-title"),
+            thresholdNote: document.getElementById("threshold-note"),
+            sources: document.getElementById("sources"),
+            prev: document.getElementById("prev"),
+            next: document.getElementById("next"),
+            counter: document.getElementById("counter"),
+            files: document.getElementById("files"),
+            reload: document.getElementById("reload"),
+            reloadForce: document.getElementById("reload-force"),
+            ingestResult: document.getElementById("ingest-result")
+        };
+
+        // 서버가 알려주는 값. 응답이 없으면 막대의 기준선만 생략한다.
+        var config = { topK: null, similarityThreshold: null };
+        var timer = null;
+        var busy = false;
+        var activeIndex = 0;
+        var sourceCount = 0;
+
+        function escapeHtml(text) {
+            return String(text)
+                .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+        }
+
+        function api(path, options) {
+            return fetch(path, options).then(function (res) {
+                if (!res.ok) {
+                    throw new Error("서버가 " + res.status + " 로 응답했습니다");
+                }
+                return res.json();
+            });
+        }
+
+        function post(path, body) {
+            return api(path, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body)
+            });
+        }
+
+        function setStatus(message, isError) {
+            els.status.textContent = message || "";
+            els.status.className = isError ? "error" : "";
+        }
+
+        function startTimer() {
+            var began = Date.now();
+            stopTimer();
+            var tick = function () {
+                var seconds = Math.round((Date.now() - began) / 1000);
+                setStatus("답변을 만들고 있습니다 (" + seconds + "초)");
+            };
+            tick();
+            timer = setInterval(tick, 1000);
+        }
+
+        function stopTimer() {
+            if (timer) { clearInterval(timer); timer = null; }
+        }
+
+        /** 답변 안의 [1] 표기를 근거 항목으로 이동하는 버튼으로 바꾼다. */
+        function renderAnswer(text) {
+            var notFound = text.indexOf("찾을 수 없습니다") !== -1;
+            els.answer.className = notFound ? "notfound" : "";
+            els.answer.innerHTML = escapeHtml(text.trim()).replace(
+                /\[(\d+)\]/g,
+                '<button type="button" class="cite" data-index="$1">[$1]</button>'
+            );
+        }
+
+        function renderSources(list) {
+            els.sources.innerHTML = "";
+            els.sourcesTitle.textContent = "근거 " + list.length + "건";
+
+            list.forEach(function (item) {
+                var score = typeof item.score === "number" ? item.score : 0;
+                var li = document.createElement("li");
+                li.dataset.index = String(item.index);
+
+                var gauge = '<div class="gauge"><div class="fill" style="width:' +
+                    Math.max(0, Math.min(100, score * 100)).toFixed(1) + '%"></div>';
+                if (typeof config.similarityThreshold === "number") {
+                    gauge += '<div class="mark" style="left:' +
+                        (config.similarityThreshold * 100).toFixed(1) + '%"></div>';
+                }
+                gauge += "</div>";
+
+                li.innerHTML =
+                    '<div class="meta">' +
+                    '<span class="num">' + item.index + '</span>' +
+                    '<span class="file">' + escapeHtml(item.source) + '</span>' +
+                    '<span class="score">' + score.toFixed(3) + '</span>' +
+                    '</div>' +
+                    gauge +
+                    '<p class="excerpt">' + escapeHtml(item.excerpt || "") + '</p>';
+
+                els.sources.appendChild(li);
+            });
+
+            sourceCount = list.length;
+            els.thresholdNote.textContent = typeof config.similarityThreshold === "number"
+                ? "점수 " + config.similarityThreshold.toFixed(2) + " 이상만 표시합니다. 막대 위 세로선이 그 위치입니다."
+                : "";
+            els.sourcesBlock.hidden = false;
+            goTo(1, false);
+        }
+
+        /** 근거 하나를 선택 상태로 만든다. scroll 이 false 면 화면을 움직이지 않는다. */
+        function goTo(index, scroll) {
+            index = Number(index);
+            if (!sourceCount || index < 1 || index > sourceCount) { return; }
+            activeIndex = index;
+
+            var items = els.sources.querySelectorAll("li");
+            for (var i = 0; i < items.length; i++) {
+                var match = items[i].dataset.index === String(index);
+                items[i].classList.toggle("active", match);
+                if (match && scroll !== false && items[i].scrollIntoView) {
+                    items[i].scrollIntoView({ block: "center", behavior: "smooth" });
+                }
+            }
+            updateNav();
+        }
+
+        function updateNav() {
+            els.counter.textContent = sourceCount ? activeIndex + " / " + sourceCount : "0 / 0";
+            els.prev.disabled = activeIndex <= 1;
+            els.next.disabled = activeIndex >= sourceCount;
+        }
+
+        function loadCorpus() {
+            return api("/api/ingested").then(function (files) {
+                els.files.innerHTML = "";
+                if (!files.length) {
+                    els.corpus.textContent = "적재된 문서가 없습니다";
+                    els.files.innerHTML = '<li>아래 버튼으로 문서를 읽어오세요.</li>';
+                    return;
+                }
+                var chunks = files.reduce(function (sum, f) { return sum + f.chunkCount; }, 0);
+                els.corpus.textContent = "문서 " + files.length + "개, 조각 " + chunks + "개";
+                files.forEach(function (f) {
+                    var li = document.createElement("li");
+                    li.innerHTML = '<span>' + escapeHtml(f.fileName) + '</span>' +
+                        '<span>' + f.chunkCount + '조각</span>';
+                    els.files.appendChild(li);
+                });
+            });
+        }
+
+        function loadConfig() {
+            return api("/api/config").then(function (data) {
+                config = data;
+            });
+        }
+
+        function ask(question) {
+            busy = true;
+            els.submit.disabled = true;
+            els.answerBlock.hidden = true;
+            els.sourcesBlock.hidden = true;
+            sourceCount = 0;
+            activeIndex = 0;
+            updateNav();
+            setStatus("문서를 찾고 있습니다");
+
+            // 1단계: 검색만 먼저. 빠르게 끝나므로 근거를 먼저 보여준다.
+            post("/api/search", { question: question })
+                .then(function (sources) {
+                    if (!sources.length) {
+                        setStatus("기준 점수를 넘는 문서 조각이 없습니다. 질문을 바꾸거나 문서를 더 넣어보세요.");
+                        return null;
+                    }
+                    renderSources(sources);
+                    startTimer();
+                    // 2단계: 답변 생성. CPU 추론이면 수십 초가 걸린다.
+                    return post("/api/ask", { question: question });
+                })
+                .then(function (result) {
+                    stopTimer();
+                    if (!result) { return; }
+                    renderAnswer(result.answer);
+                    if (result.sources && result.sources.length) {
+                        renderSources(result.sources);
+                    }
+                    els.answerBlock.hidden = false;
+                    setStatus("");
+                })
+                .catch(function (err) {
+                    stopTimer();
+                    setStatus(err.message || "요청이 실패했습니다. 앱이 실행 중인지 확인하세요.", true);
+                })
+                .then(function () {
+                    busy = false;
+                    els.submit.disabled = false;
+                });
+        }
+
+        function runIngest(force) {
+            els.reload.disabled = true;
+            els.reloadForce.disabled = true;
+            els.ingestResult.textContent = force
+                ? "모든 문서를 다시 읽고 있습니다. 조각마다 임베딩을 계산하므로 오래 걸립니다."
+                : "새 문서를 찾고 있습니다.";
+
+            api("/api/ingest?force=" + (force ? "true" : "false"), { method: "POST" })
+                .then(function (results) {
+                    if (!results.length) {
+                        els.ingestResult.textContent = "폴더에 읽을 문서가 없습니다.";
+                        return loadCorpus();
+                    }
+                    els.ingestResult.textContent = results.map(function (r) {
+                        return r.fileName + " — " + r.status + " (" + r.chunkCount + "조각)";
+                    }).join("\n");
+                    return loadCorpus();
+                })
+                .catch(function (err) {
+                    els.ingestResult.textContent = err.message || "문서를 읽지 못했습니다.";
+                })
+                .then(function () {
+                    els.reload.disabled = false;
+                    els.reloadForce.disabled = false;
+                });
+        }
+
+        els.form.addEventListener("submit", function (event) {
+            event.preventDefault();
+            var question = els.question.value.trim();
+            if (!question || busy) { return; }
+            ask(question);
+        });
+
+        // Ctrl+Enter 로도 보낼 수 있게 한다. 줄바꿈은 Enter 그대로.
+        els.question.addEventListener("keydown", function (event) {
+            if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault();
+                els.form.dispatchEvent(new Event("submit", { cancelable: true }));
+            }
+        });
+
+        els.answer.addEventListener("click", function (event) {
+            var target = event.target;
+            if (target && target.classList && target.classList.contains("cite")) {
+                goTo(target.dataset.index, true);
+            }
+        });
+
+        els.sources.addEventListener("click", function (event) {
+            var li = event.target && event.target.closest ? event.target.closest("li") : null;
+            if (li && li.dataset.index) { goTo(li.dataset.index, false); }
+        });
+
+        els.prev.addEventListener("click", function () { goTo(activeIndex - 1, true); });
+        els.next.addEventListener("click", function () { goTo(activeIndex + 1, true); });
+
+        els.reload.addEventListener("click", function () { runIngest(false); });
+        els.reloadForce.addEventListener("click", function () { runIngest(true); });
+
+        loadConfig().catch(function () { /* 기준선만 생략하고 계속 진행 */ });
+        loadCorpus().catch(function () {
+            els.corpus.textContent = "서버에 연결하지 못했습니다";
+        });
+    })();
+</script>
+</body>
+</html>
