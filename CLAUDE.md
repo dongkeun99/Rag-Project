@@ -25,7 +25,8 @@
   - 기동 로그에서 `Started RagApplication`과 `청킹 설정: chunkSize=250 토큰, minChunkSizeChars=120`을 확인한다.
   - 화면: `http://localhost:8080/`
 - **인프라 확인**
-  - DB: `docker ps`로 `rag-postgres`가 Up인지 확인. 꺼져 있으면 상위 폴더(`D:\dev\rag-project`)의 `docker-compose.yml`로 `docker compose up -d`
+  - DB: `docker ps`로 `rag-postgres`가 Up인지 확인. 꺼져 있으면 프로젝트 루트에서 `docker compose up -d`
+    - `docker-compose.yml`의 `name: rag-project`는 지우지 않는다. 이 값이 기존 데이터 볼륨(`rag-project_pgdata`)의 이름을 정하므로, 바뀌면 빈 DB가 새로 만들어진다.
   - Ollama: `ollama list`
 - **API 확인**: 검색 품질은 LLM을 거치기 전에 `/api/search`로 먼저 본다.
 

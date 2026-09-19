@@ -123,7 +123,8 @@ rag
 ├── src/main/resources
 │   ├── application.yml                  # 모델 · DB · 검색 설정
 │   └── static/index.html                # 질의 화면
-└── dev_docs                             # 단계별 개발 기록
+├── dev_docs                             # 단계별 개발 기록
+└── docker-compose.yml                   # PostgreSQL + pgvector 컨테이너
 ```
 
 ---
@@ -148,31 +149,7 @@ ollama pull exaone3.5:2.4b
 
 ### 2. 벡터 DB 실행
 
-`docker-compose.yml`은 저장소에 포함되어 있지 않으니 아래 내용으로 만든 뒤 실행합니다.
-
-<details>
-<summary>docker-compose.yml</summary>
-
-```yaml
-services:
-  postgres:
-    image: pgvector/pgvector:pg17
-    container_name: rag-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: raguser
-      POSTGRES_PASSWORD: ragpass
-      POSTGRES_DB: ragdb
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-
-volumes:
-  pgdata:
-```
-
-</details>
+프로젝트 루트의 `docker-compose.yml`로 pgvector가 설치된 PostgreSQL을 띄웁니다.
 
 ```bash
 docker compose up -d

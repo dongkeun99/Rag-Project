@@ -1,0 +1,19 @@
+# 프로젝트 이름을 고정해 볼륨 이름(rag-project_pgdata)이 폴더 위치와 상관없이 유지되게 한다.
+name: rag-project
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: rag-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: raguser
+      POSTGRES_PASSWORD: ragpass
+      POSTGRES_DB: ragdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
