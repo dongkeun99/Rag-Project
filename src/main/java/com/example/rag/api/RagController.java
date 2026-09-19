@@ -46,8 +46,8 @@ public class RagController {
     public RagController(ChatClient.Builder chatClientBuilder,
                          VectorStore vectorStore,
                          IngestService ingestService,
-                         @Value("${rag.top-k:5}") int topK,
-                         @Value("${rag.similarity-threshold:0.5}") double similarityThreshold) {
+                         @Value("${rag.top-k:3}") int topK,
+                         @Value("${rag.similarity-threshold:0.40}") double similarityThreshold) {
         this.chatClient = chatClientBuilder.build();
         this.vectorStore = vectorStore;
         this.ingestService = ingestService;
