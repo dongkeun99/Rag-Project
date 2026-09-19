@@ -4,6 +4,8 @@
 
 외부 API나 유료 서비스 없이, **전부 로컬에서 돌아가는 완결된 파이프라인**을 만드는 것을 목표로 했습니다. 문서를 넣으면 그 문서에 근거해서만 답변하는 챗봇이 최종 결과물입니다.
 
+> **업데이트** — 1차 구현(텍스트 파일 한 개, `GET /ask`) 이후 폴더 단위 문서 적재, 중복 적재 방지, 출처 표시, 질의 화면을 더한 **2차 개선**을 진행했습니다. 본문의 아키텍처·구현 과정·트러블슈팅은 1차 구현 기록이고, 현재 코드 기준 구조와 실행 방법은 [2차 개선](#2차-개선) 섹션에 정리했습니다.
+
 ---
 
 ## 목차
@@ -18,6 +20,7 @@
 - [실행 결과](#실행-결과)
 - [실행 방법](#실행-방법)
 - [배운 점](#배운-점)
+- [2차 개선](#2차-개선)
 - [앞으로 할 것](#앞으로-할-것)
 
 ---
@@ -144,6 +147,7 @@ Indexes:
 | 임베딩           | `bge-m3`         | 약 1.2GB | 1024 |
 | 답변 생성        | `gemma2:9b`      | 약 5.4GB | -    |
 | 답변 생성 (대안) | `exaone3.5:7.8b` | 약 4.8GB | -    |
+| 답변 생성 (2차 기본값) | `exaone3.5:2.4b` | 약 1.6GB | -    |
 
 ### 주요 설정값
 
@@ -559,6 +563,8 @@ GET http://localhost:8080/ask?q=오늘 서울 날씨는 어때
 
 ## 실행 방법
 
+> 아래는 1차 구현 기준입니다. 2차 개선 이후 답변 모델, 문서 위치, API 경로가 바뀌었으니 현재 코드는 [실행 방법 (2차 기준)](#실행-방법-2차-기준)을 따르세요.
+
 ### 사전 요구사항
 
 - JDK 21 이상 (Java 25 권장)
@@ -628,26 +634,420 @@ curl "http://localhost:8080/ask?q=bge-m3는 몇 차원인가요"
 
 ---
 
+## 2차 개선
+
+1차 구현은 "RAG가 동작한다"를 확인하는 데까지였습니다. 텍스트 파일 하나를 앱이 뜰 때마다 다시 넣었고, 답변만 돌려줄 뿐 무엇을 근거로 했는지는 보이지 않았습니다.
+
+2차에서는 1차의 [앞으로 할 것](#앞으로-할-것)에 적어 둔 항목 중 **PDF 지원, 중복 저장 방지, 출처 표시**를 구현하고, 브라우저에서 바로 질문할 수 있는 화면을 붙였습니다.
+
+### 무엇이 바뀌었나
+
+| 구분           | 1차                                      | 2차                                                                   |
+| -------------- | ---------------------------------------- | --------------------------------------------------------------------- |
+| 문서 입력      | classpath의 `sample.txt` 한 개           | 지정 폴더의 pdf·docx·pptx·html·md·txt 전체 (Tika)                     |
+| 적재 시점      | 앱 실행마다 자동 (`ApplicationRunner`)   | `POST /api/ingest` 호출 시                                            |
+| 중복 처리      | 실행할 때마다 같은 청크가 또 저장됨      | SHA-256 해시 비교로 새 파일·바뀐 파일만 적재                          |
+| 청킹           | 200토큰 / 최소 100자 (코드에 고정)       | 250토큰 / 최소 120자 (`application.yml`로 분리)                       |
+| 검색           | topK 3                                   | topK 3 + 유사도 임계값 0.40                                           |
+| 근거 없는 질문 | LLM이 "찾을 수 없다"를 판단              | 임계값을 넘는 청크가 없으면 LLM을 부르지 않고 바로 응답               |
+| 프롬프트       | user 메시지 하나에 지시 + 문서           | system(규칙) / user(번호·출처 붙인 조각 + 질문) 분리                  |
+| 응답           | 답변 문자열                              | 답변 + 근거 목록(출처 파일, 점수, 발췌) JSON                          |
+| API            | `GET /search`, `GET /ask`                | `/api/search`, `/api/ask`, `/api/ingest`, `/api/ingested`, `/api/config` |
+| 화면           | 없음                                     | `static/index.html` 질의 화면                                         |
+| 답변 모델      | `gemma2:9b`, temperature 0.3             | `exaone3.5:2.4b`, temperature 0.2, 출력 300토큰 제한                  |
+
+### 패키지 구조
+
+1차에서는 모든 클래스가 루트 패키지에 있었는데, 역할에 따라 `api`(요청 처리)와 `ingest`(문서 적재)로 나눴습니다.
+
+```
+src/main/java/com/example/rag
+├── RagApplication.java
+├── api
+│   └── RagController.java           # 검색 · 질의 · 적재 API
+└── ingest
+    ├── IngestService.java           # 폴더 스캔 → 청킹 → 임베딩 → 적재
+    └── IngestedFileRepository.java  # 적재 기록 테이블 (ingested_file)
+
+src/main/resources
+├── application.yml
+└── static/index.html                # 질의 화면
+```
+
+### 전체 구조 (2차)
+
+```mermaid
+flowchart TB
+    subgraph ingest["인제스트 (POST /api/ingest)"]
+        A["문서 폴더<br/>rag.docs-path"] --> H{"SHA-256 해시를<br/>적재 기록과 비교"}
+        H -- "같음" --> S["SKIPPED"]
+        H -- "내용이 바뀜" --> X["기존 청크 삭제<br/>source 필터"]
+        H -- "처음 보는 파일" --> R
+        X --> R["TikaDocumentReader<br/>pdf · docx · pptx · html · md · txt"]
+        R --> B["TokenTextSplitter<br/>250토큰 청킹"]
+        B --> M["메타데이터 부착<br/>source · fileHash · chunkIndex"]
+        M --> C["Ollama bge-m3<br/>임베딩"]
+        C --> D[("vector_store<br/>pgvector")]
+        D -- "적재 후 기록" --> F[("ingested_file<br/>파일명 · 해시 · 청크 수")]
+    end
+
+    subgraph query["질의 (POST /api/ask)"]
+        Q["사용자 질문"] --> E["Ollama bge-m3<br/>질문 임베딩"]
+        E --> G["유사도 검색<br/>topK 3 · 임계값 0.40"]
+        G -- "0건" --> N["문서에서 찾을 수 없습니다<br/>LLM 호출 생략"]
+        G -- "1건 이상" --> P["system 프롬프트 +<br/>번호 · 출처 붙인 조각"]
+        P --> L["Ollama exaone3.5:2.4b<br/>답변 생성"]
+        L --> O["답변 + 근거 목록"]
+    end
+
+    D -.-> G
+```
+
+### 1. 폴더 단위 문서 적재 (Tika)
+
+`spring-ai-tika-document-reader` 의존성을 추가하고 `TikaDocumentReader`로 문서를 읽습니다. Apache Tika는 파일 형식을 스스로 판별해 텍스트를 뽑아주기 때문에, PDF 전용 리더(`spring-ai-pdf-document-reader`) 대신 이쪽을 쓰면 **리더 하나로 PDF·Word·PowerPoint·HTML까지** 처리됩니다.
+
+```gradle
+implementation 'org.springframework.ai:spring-ai-tika-document-reader'
+```
+
+- `rag.docs-path` 폴더 **바로 아래의 파일만** 읽습니다. 하위 폴더는 읽지 않습니다.
+- 확장자 목록(`pdf, doc, docx, ppt, pptx, html, htm, txt, md`)에 있는 파일만 대상으로 삼습니다.
+- 텍스트를 뽑지 못한 파일(스캔 이미지로 된 PDF 등)은 `EMPTY`로 표시하고 건너뜁니다.
+
+### 2. 중복 적재 방지
+
+1차 [트러블슈팅 7번](#7-중복-저장)(실행할 때마다 같은 문서가 다시 저장됨)에서 "앞으로 개선할 것"으로 남겨 둔 부분입니다.
+
+어떤 파일을 어떤 내용으로 적재했는지 기록하는 테이블을 따로 둡니다. 앱이 뜰 때 `@PostConstruct`에서 없으면 만듭니다.
+
+```sql
+CREATE TABLE IF NOT EXISTS ingested_file (
+    file_name   TEXT PRIMARY KEY,
+    file_hash   TEXT NOT NULL,
+    chunk_count INT  NOT NULL,
+    ingested_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)
+```
+
+적재할 때마다 파일의 SHA-256 해시를 계산해 기록과 비교합니다.
+
+| 상황                                  | 처리                                       | 결과 상태 |
+| ------------------------------------- | ------------------------------------------ | --------- |
+| 처음 보는 파일                        | 청킹 → 임베딩 → 적재, 기록 추가            | `ADDED`   |
+| 파일명은 같고 해시가 다름 (내용 수정) | 기존 청크를 지우고 다시 적재, 기록 갱신    | `UPDATED` |
+| 파일명과 해시가 모두 같음             | 아무것도 하지 않음                         | `SKIPPED` |
+| 텍스트 추출 실패                      | 적재하지 않음                              | `EMPTY`   |
+
+변경 여부는 수정 날짜가 아니라 **파일 내용의 해시**로 판단합니다. 수정 날짜는 파일을 복사하거나 다시 저장하기만 해도 내용과 상관없이 바뀌기 때문입니다.
+
+기존 청크는 청크마다 붙여 둔 `source` 메타데이터로 걸러서 지웁니다.
+
+```java
+vectorStore.delete(new Filter.Expression(
+        Filter.ExpressionType.EQ,
+        new Filter.Key("source"),
+        new Filter.Value(fileName)));
+```
+
+`POST /api/ingest?force=true`로 호출하면 해시가 같아도 전부 다시 적재합니다. 청킹 설정을 바꿔 가며 실험할 때 씁니다.
+
+### 3. 한국어 문서에 맞춘 청킹
+
+```java
+TokenTextSplitter.builder()
+        .withChunkSize(chunkSize)                 // rag.chunk-size (250)
+        .withMinChunkSizeChars(minChunkSizeChars) // rag.min-chunk-size-chars (120)
+        .withMinChunkLengthToEmbed(30)
+        .build();
+```
+
+Spring AI 기본값(800토큰 / 최소 350자)은 한글 문서에는 너무 커서 **청크 하나에 여러 주제가 섞입니다.** 주제가 섞인 청크는 어떤 질문과도 애매하게 비슷해져 검색 정확도가 떨어지므로 250토큰으로 줄였습니다. 30자보다 짧은 조각은 임베딩하지 않고 버립니다.
+
+값은 `application.yml`로 빼서 코드 수정 없이 바꿀 수 있습니다. 바꾼 뒤에는 `?force=true`로 다시 적재해야 반영됩니다.
+
+### 4. 출처 메타데이터
+
+각 청크에 메타데이터 세 개를 붙입니다. Tika가 넣어 준 메타데이터는 그대로 두되, 이 세 키는 항상 덮어씁니다.
+
+| 키           | 값                    | 쓰임                               |
+| ------------ | --------------------- | ---------------------------------- |
+| `source`     | 파일명                | 답변 근거 표시, 파일 단위 삭제     |
+| `fileHash`   | 파일의 SHA-256        | 어느 버전의 파일에서 나온 청크인지 |
+| `chunkIndex` | 파일 안에서의 순번    | 원문에서의 위치                    |
+
+### 5. 검색 임계값과 '근거 없음' 처리
+
+1차에서는 `topK(3)`만 지정해서, **어떤 질문이든 가장 가까운 청크(최대 3개)가 무조건 딸려왔습니다.** 문서와 상관없는 질문에도 LLM은 엉뚱한 문서를 받아 들고 "찾을 수 없다"를 스스로 판단해야 했습니다.
+
+2차에서는 유사도 임계값을 걸었습니다.
+
+```java
+SearchRequest.builder()
+        .query(question)
+        .topK(topK)                               // rag.top-k (3)
+        .similarityThreshold(similarityThreshold) // rag.similarity-threshold (0.40)
+        .build();
+```
+
+임계값을 넘는 청크가 하나도 없으면 **LLM을 호출하지 않고** 바로 "문서에서 찾을 수 없습니다."를 돌려줍니다. 할루시네이션 방지를 프롬프트에만 맡기지 않고 검색 단계에서 먼저 거르는 셈이고, 수십 초 걸리는 답변 생성도 건너뜁니다.
+
+### 6. 프롬프트 분리
+
+규칙은 system 메시지로, 문서 조각과 질문은 user 메시지로 나눴습니다.
+
+```text
+아래 문서 조각을 근거로 질문에 한국어로 답하세요.
+
+- 문서 조각에 있는 내용으로 답하고, 없는 내용은 지어내지 마세요.
+- 문서에 쓰인 용어를 그대로 사용하세요.
+- 목록을 묻는 질문이면 문서에 있는 항목을 빠짐없이 나열하세요.
+- 답만 간결하게 쓰세요. 문서에 대한 설명, 사과, "문서에 따르면" 같은
+  머리말은 붙이지 마세요.
+- 어느 조각에도 근거가 없을 때만 "문서에서 찾을 수 없습니다"라고 답하세요.
+```
+
+user 메시지는 조각마다 번호와 출처를 붙여 조립합니다. 이 번호는 응답의 `sources[].index`와 같아서, 화면에서 답변과 근거를 이어 볼 수 있습니다.
+
+```text
+# 문서 조각
+[1] 출처: 전자정부_표준프레임워크_개요.pdf
+(청크 본문)
+
+[2] 출처: ...
+
+# 질문
+(사용자 질문)
+```
+
+### 7. API
+
+| 메서드 | 경로                        | 설명                                                                 |
+| ------ | --------------------------- | -------------------------------------------------------------------- |
+| POST   | `/api/ask`                  | 검색 + 답변 생성. 답변과 근거 목록을 함께 반환                       |
+| POST   | `/api/search`               | 검색만 수행. 검색 품질을 눈으로 확인할 때 사용                       |
+| POST   | `/api/ingest?force=false`   | 폴더를 훑어 새 파일·바뀐 파일만 적재. 파일별 결과(`status`) 반환     |
+| GET    | `/api/ingested`             | 현재 적재된 파일 목록과 청크 수                                      |
+| GET    | `/api/config`               | 화면 표시용 `topK`, `similarityThreshold`                            |
+
+`/api/ask`, `/api/search`는 `{"question": "..."}` 형식의 JSON을 받습니다. 1차의 `GET ?q=` 방식과 달리 질문이 URL이 아니라 요청 본문에 실리므로, 한글이나 특수문자의 URL 인코딩을 신경 쓸 필요가 없습니다.
+
+`/api/ask` 응답 예시:
+
+```json
+{
+  "answer": "실행환경의 다섯 가지 서비스 그룹은 다음과 같습니다: ...",
+  "sources": [
+    {
+      "index": 1,
+      "source": "전자정부_표준프레임워크_개요.pdf",
+      "score": 0.6839510202407837,
+      "excerpt": "다섯 개의 서비스 그룹으로 나뉜다. · 화면처리 : 사용자 인터페이스와 요청 흐름을 담당한다. …"
+    }
+  ]
+}
+```
+
+`excerpt`는 청크 앞부분 200자를 공백을 정리해 잘라 낸 것입니다.
+
+### 8. 질의 화면
+
+`src/main/resources/static/index.html` 한 파일에 HTML·CSS·JS를 모두 담았습니다. 별도 빌드 없이 앱을 띄우고 `http://localhost:8080`에 접속하면 됩니다.
+
+```mermaid
+sequenceDiagram
+    participant U as 브라우저 (index.html)
+    participant C as RagController
+    participant V as PgVectorStore
+    participant L as Ollama exaone3.5:2.4b
+
+    U->>C: POST /api/search
+    C->>V: similaritySearch (topK 3, 임계값 0.40)
+    V-->>C: 근거 조각
+    C-->>U: 근거 목록 → 바로 화면에 표시
+    U->>C: POST /api/ask
+    C->>V: similaritySearch (같은 조건)
+    V-->>C: 근거 조각
+    C->>L: system 프롬프트 + 번호 붙인 조각 + 질문
+    L-->>C: 답변
+    C-->>U: 답변 + 근거
+```
+
+- **두 단계 요청**: 검색은 금방 끝나고 답변 생성은 수십 초가 걸리기 때문에, `/api/search`로 근거를 먼저 보여 주고 이어서 `/api/ask`로 답변을 기다립니다. 기다리는 동안 경과 시간(초)을 표시합니다.
+- **점수 막대**: 근거마다 유사도 점수를 막대로 그리고, 막대 위 세로선으로 임계값(0.40) 위치를 표시합니다. 기준선보다 얼마나 여유 있게 검색됐는지가 한눈에 보입니다.
+- **인용 이동**: 답변 안에 `[1]` 같은 표기가 있으면 버튼으로 바꿔, 누르면 해당 근거로 이동합니다. 이전/다음 버튼으로 근거를 하나씩 넘겨 볼 수도 있습니다.
+- **문서 관리**: 적재된 파일과 조각 수를 보여 주고, "새 문서 읽기"(`/api/ingest`)와 "전체 다시 읽기"(`?force=true`) 버튼을 둡니다.
+- 검색 결과가 0건이면 답변 요청을 보내지 않고 "기준 점수를 넘는 문서 조각이 없습니다" 안내를 띄웁니다. 답변이 "찾을 수 없습니다"이면 답변 왼쪽 선을 빨간색으로 바꿔 구분합니다.
+- `Ctrl+Enter`로도 질문을 보낼 수 있습니다.
+
+### 9. 답변 모델과 생성 옵션
+
+```yaml
+spring:
+  ai:
+    ollama:
+      chat:
+        options:
+          model: exaone3.5:2.4b
+          temperature: 0.2
+          num-predict: 300
+          num-ctx: 4096
+```
+
+| 옵션          | 값               | 의미                                                                        |
+| ------------- | ---------------- | --------------------------------------------------------------------------- |
+| `model`       | `exaone3.5:2.4b` | LG AI연구원 EXAONE 3.5의 2.4B 모델. `gemma2:9b`(약 5.4GB)에서 약 1.6GB로 줄었습니다 |
+| `temperature` | 0.2              | 1차의 0.3에서 더 낮췄습니다                                                 |
+| `num-predict` | 300              | 한 번에 생성하는 최대 토큰 수. 답변 길이와 생성 시간의 상한                 |
+| `num-ctx`     | 4096             | 모델이 한 번에 다루는 컨텍스트(입력 + 출력) 토큰 수                         |
+
+> **라이선스 주의**: EXAONE 3.5는 2.4b도 7.8b와 같은 연구/비상업 목적 라이선스입니다. 상업적으로 쓰려면 답변 모델을 다시 골라야 합니다. 설정 파일에서 모델명 한 줄만 바꾸면 교체됩니다.
+
+### 설정값 정리
+
+```yaml
+rag:
+  docs-path: D:/dev/rag-docs   # 적재할 문서 폴더 (각자 환경에 맞게 변경)
+  top-k: 3                     # 검색할 청크 수
+  similarity-threshold: 0.40   # 이 점수 미만 청크는 근거에서 제외
+  chunk-size: 250              # 청크 크기 (토큰)
+  min-chunk-size-chars: 120    # 청크 최소 글자 수
+```
+
+### 실행 결과 (2차 기준)
+
+전자정부 표준프레임워크 관련 PDF 3개를 적재한 상태에서 확인했습니다.
+
+**1. 적재 목록** — `GET /api/ingested`
+
+| 파일                               | 청크 수 |
+| ---------------------------------- | ------- |
+| 개발환경_설치_가이드.pdf           | 5       |
+| 공통컴포넌트_활용_가이드.pdf       | 5       |
+| 전자정부_표준프레임워크_개요.pdf   | 7       |
+
+**2. 다시 적재해도 중복되지 않음** — `POST /api/ingest`
+
+```json
+[
+  {"fileName":"개발환경_설치_가이드.pdf","status":"SKIPPED","chunkCount":0},
+  {"fileName":"공통컴포넌트_활용_가이드.pdf","status":"SKIPPED","chunkCount":0},
+  {"fileName":"전자정부_표준프레임워크_개요.pdf","status":"SKIPPED","chunkCount":0}
+]
+```
+
+```bash
+docker exec rag-postgres psql -U raguser -d ragdb -tAc \
+  "SELECT metadata->>'source', count(*) FROM vector_store GROUP BY 1;"
+```
+
+```
+공통컴포넌트_활용_가이드.pdf|5
+전자정부_표준프레임워크_개요.pdf|7
+개발환경_설치_가이드.pdf|5
+```
+
+내용이 그대로인 파일은 모두 건너뛰었고, DB의 청크 수도 적재 목록과 같은 17개 그대로입니다. 1차에서 앱을 켤 때마다 청크가 불어나던 문제가 해결됐습니다.
+
+**3. 문서에 있는 질문** — `POST /api/ask`
+
+```json
+{"question": "실행환경의 다섯 가지 서비스 그룹이 뭔가요?"}
+```
+
+```
+실행환경의 다섯 가지 서비스 그룹은 다음과 같습니다:
+
+1. 화면처리
+2. 업무처리
+3. 데이터처리
+4. 연계통합
+5. 공통기반
+```
+
+| 근거 | 출처                               | 점수  |
+| ---- | ---------------------------------- | ----- |
+| 1    | 전자정부_표준프레임워크_개요.pdf   | 0.684 |
+| 2    | 전자정부_표준프레임워크_개요.pdf   | 0.528 |
+| 3    | 전자정부_표준프레임워크_개요.pdf   | 0.515 |
+
+1번 근거가 "다섯 개의 서비스 그룹으로 나뉜다. · 화면처리 : …"로 시작하는 청크이고, 답변의 다섯 항목이 모두 여기에 있습니다. 첫 요청 기준으로 답변까지 약 20초가 걸렸습니다.
+
+**4. 문서에 없는 질문** — `POST /api/ask`
+
+```json
+{"question": "오늘 서울 날씨는 어때"}
+```
+
+```json
+{"answer": "문서에서 찾을 수 없습니다.", "sources": []}
+```
+
+임계값 0.40을 넘는 청크가 하나도 없어 **LLM을 호출하지 않고 즉시** 응답했습니다. 1차에서는 임계값이 없어 같은 질문에도 가장 가까운 청크가 그대로 LLM에 전달됐습니다.
+
+### 실행 방법 (2차 기준)
+
+**1. 모델 다운로드**
+
+```bash
+ollama pull bge-m3
+ollama pull exaone3.5:2.4b
+```
+
+**2. 벡터 DB 실행** — `docker-compose.yml` 내용은 [2단계](#2단계-벡터-db-컨테이너-실행) 참고
+
+```bash
+docker compose up -d
+```
+
+**3. 문서 준비** — `application.yml`의 `rag.docs-path`를 문서 폴더로 지정하고, 그 폴더에 pdf·docx·pptx·html·md·txt 파일을 넣습니다.
+
+**4. 애플리케이션 실행**
+
+```bash
+./gradlew bootRun
+```
+
+**5. 사용**
+
+브라우저에서 `http://localhost:8080`에 접속해 아래쪽 **적재된 문서**를 펼치고 **새 문서 읽기**를 누른 뒤 질문합니다.
+
+API로 직접 호출할 수도 있습니다.
+
+```bash
+# 새 문서·바뀐 문서 적재 (전부 다시 적재하려면 ?force=true)
+curl -X POST "http://localhost:8080/api/ingest"
+
+# 질문
+curl -X POST "http://localhost:8080/api/ask" \
+  -H "Content-Type: application/json" \
+  -d '{"question": "실행환경의 다섯 가지 서비스 그룹이 뭔가요?"}'
+```
+
+> 적재는 청크마다 임베딩을 계산하므로 문서가 많으면 오래 걸립니다. 한 번 적재한 뒤에는 바뀐 파일만 다시 처리합니다.
+
+---
+
 ## 앞으로 할 것
 
 ### 기능
 
-- [ ] PDF 문서 지원 (`spring-ai-pdf-document-reader`)
+- [x] PDF 문서 지원 → 2차에서 Tika로 pdf·docx·pptx·html·md·txt까지 지원
 - [ ] 전자정부 표준프레임워크 공식 문서를 대상 데이터로 적용
-- [ ] 중복 저장 방지 (문서 해시 기반 체크)
-- [ ] 답변에 출처(어떤 문서의 어느 부분인지) 표시
+- [x] 중복 저장 방지 (문서 해시 기반 체크) → 2차에서 SHA-256 + `ingested_file` 테이블로 구현
+- [x] 답변에 출처(어떤 문서의 어느 부분인지) 표시 → 2차에서 파일명·점수·발췌 반환
 - [ ] 문서 업로드 API
 
 ### 프론트엔드
 
-- [ ] React / Next.js 기반 채팅 UI
+- [ ] React / Next.js 기반 채팅 UI (2차에서는 정적 HTML 한 장으로 질의 화면 구현)
 - [ ] 스트리밍 응답 (토큰 단위 출력)
-- [ ] 검색된 청크를 사이드에 함께 표시
+- [x] 검색된 청크를 함께 표시 → 2차 질의 화면의 근거 목록과 점수 막대
 
 ### 인프라
 
 - [ ] 배포 (접속 가능한 데모 링크 제공)
-- [ ] 청크 크기와 `topK` 값에 따른 검색 품질 비교 실험
+- [ ] 청크 크기와 `topK` 값에 따른 검색 품질 비교 실험 (설정값 분리와 `?force=true` 재적재까지 준비)
 
 ---
 
