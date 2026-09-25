@@ -24,6 +24,12 @@ import java.util.Optional;
 @RequestMapping("/api")
 public class RagController {
 
+    /**
+     * 답변 규칙. 긍정 지시를 앞에, "문서에서 찾을 수 없습니다" 대체 응답을 맨 뒤에 둔다.
+     * 작은 모델은 규칙이 늘면 뒤쪽 지시를 흘리므로 규칙 수는 최소로 유지한다.
+     * 질문의 틀린 전제를 바로잡는 규칙은 시스템 프롬프트와 질문 바로 뒤 양쪽에서 시도했으나
+     * exaone3.5:2.4b에서는 둘 다 듣지 않아 넣지 않는다. 근거는 dev_docs/평가_질문.md 10번.
+     */
     private static final String SYSTEM_PROMPT = """
             아래 문서 조각을 근거로 질문에 한국어로 답하세요.
 
@@ -46,7 +52,7 @@ public class RagController {
     public RagController(ChatClient.Builder chatClientBuilder,
                          VectorStore vectorStore,
                          IngestService ingestService,
-                         @Value("${rag.top-k:3}") int topK,
+                         @Value("${rag.top-k:8}") int topK,
                          @Value("${rag.similarity-threshold:0.40}") double similarityThreshold) {
         this.chatClient = chatClientBuilder.build();
         this.vectorStore = vectorStore;
@@ -112,6 +118,8 @@ public class RagController {
     }
 
     private String buildUserMessage(String question, List<Document> documents) {
+        // 조각은 점수 높은 순으로 넣는다. 1위를 질문 바로 앞에 두는 역순도 재봤지만
+        // 10번(전제 교정)은 그대로였고 3·6번이 나빠져 되돌렸다. 근거는 dev_docs/평가_질문.md 5차.
         StringBuilder context = new StringBuilder();
         for (int i = 0; i < documents.size(); i++) {
             Document document = documents.get(i);
@@ -131,11 +139,13 @@ public class RagController {
         List<SourceRef> refs = new ArrayList<>(documents.size());
         for (int i = 0; i < documents.size(); i++) {
             Document document = documents.get(i);
+            String text = textOf(document);
             refs.add(new SourceRef(
                     i + 1,
                     sourceOf(document),
                     document.getScore(),
-                    excerpt(textOf(document))));
+                    excerpt(text),
+                    text));
         }
         return refs;
     }
@@ -163,7 +173,10 @@ public class RagController {
     public record AskResponse(String answer, List<SourceRef> sources) {
     }
 
-    /** 답변의 근거가 된 청크 하나. index는 프롬프트의 [1], [2] 번호와 일치한다. */
-    public record SourceRef(int index, String source, Double score, String excerpt) {
+    /**
+     * 답변의 근거가 된 청크 하나. index는 프롬프트의 [1], [2] 번호와 일치한다.
+     * excerpt는 목록에 줄여 보여줄 용도, text는 화면에서 전문을 펼칠 용도다.
+     */
+    public record SourceRef(int index, String source, Double score, String excerpt, String text) {
     }
 }

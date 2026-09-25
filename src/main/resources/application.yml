@@ -31,7 +31,10 @@ logging:
 
 rag:
   docs-path: D:/dev/rag-docs
-  top-k: 3
+  # 목록형 질문은 항목이 여러 조각에 흩어져 상위가 넉넉해야 한다. "ID 생성 방식" 질문에서
+  # Table Id Generation이 7위(0.563), 세 방식 요약 조각이 8위(0.562)라 5로는 놓친다.
+  # 생성 시간이 응답 시간을 좌우하므로 조각을 늘리는 비용은 작다. 근거는 dev_docs/평가_질문.md 5·6번.
+  top-k: 8
   similarity-threshold: 0.40
   chunk-size: 250
   min-chunk-size-chars: 120
