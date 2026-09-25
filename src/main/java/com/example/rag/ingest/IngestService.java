@@ -22,6 +22,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -41,6 +44,11 @@ public class IngestService {
     public static final String META_SOURCE = "source";
     public static final String META_FILE_HASH = "fileHash";
     public static final String META_CHUNK_INDEX = "chunkIndex";
+    /** 조각이 속한 절의 제목 경로. 검색 결과를 눈으로 확인할 때 쓴다. */
+    public static final String META_HEADING = "heading";
+
+    /** 마크다운 제목 줄. 예: "### 연계통합" */
+    private static final Pattern HEADING = Pattern.compile("^(#{1,6})\\s+(.+?)\\s*$");
 
     private final VectorStore vectorStore;
     private final IngestedFileRepository ingestedFiles;
@@ -88,11 +96,33 @@ public class IngestService {
             return List.of();
         }
 
-        List<FileIngestResult> results = new ArrayList<>(targets.size());
+        // 폴더가 기준이다. 폴더에서 사라진 파일을 먼저 걷어낸 뒤 적재한다.
+        List<FileIngestResult> results = new ArrayList<>(removeOrphans(targets));
         for (Path file : targets) {
             results.add(ingestOne(file, force));
         }
         return results;
+    }
+
+    /**
+     * 적재 기록에는 있는데 폴더에는 없는 파일을 정리한다.
+     * 이게 없으면 문서를 폴더에서 빼도 청크가 DB에 남아 검색 결과에 끼어든다.
+     * 대상 파일이 하나도 없으면 ingestAll이 먼저 빠져나가므로, 경로를 잘못 잡아 전부 지우는 일은 없다.
+     */
+    private List<FileIngestResult> removeOrphans(List<Path> targets) {
+        Set<String> present = targets.stream()
+                .map(path -> path.getFileName().toString())
+                .collect(Collectors.toSet());
+
+        List<FileIngestResult> removed = new ArrayList<>();
+        for (IngestedFileRepository.IngestedFile ingested : ingestedFiles.findAll()) {
+            if (present.contains(ingested.fileName())) {
+                continue;
+            }
+            forget(ingested.fileName());
+            removed.add(new FileIngestResult(ingested.fileName(), Status.REMOVED, 0));
+        }
+        return removed;
     }
 
     private FileIngestResult ingestOne(Path file, boolean force) throws IOException {
@@ -127,27 +157,96 @@ public class IngestService {
         return new FileIngestResult(fileName, isUpdate ? Status.UPDATED : Status.ADDED, chunks.size());
     }
 
-    /** 파일 하나를 읽어 청크로 쪼개고, 각 청크에 출처 메타데이터를 붙인다. */
+    /** 파일 하나를 읽어 절 단위로 나눈 뒤 청크로 쪼개고, 각 청크에 메타데이터를 붙인다. */
     private List<Document> readAndSplit(Path file, String fileName, String hash) {
         TikaDocumentReader reader = new TikaDocumentReader(new FileSystemResource(file));
         List<Document> rawDocuments = reader.read();
-        List<Document> chunks = this.splitter.apply(rawDocuments);
 
-        List<Document> enriched = new ArrayList<>(chunks.size());
+        List<Document> enriched = new ArrayList<>();
         int chunkIndex = 0;
-        for (Document chunk : chunks) {
-            String text = chunk.getText();
+        for (Document raw : rawDocuments) {
+            String text = raw.getText();
             if (text == null || text.isBlank()) {
                 continue;
             }
-            // 리더가 넣어준 메타데이터를 살리되, 출처 키는 우리가 확정적으로 덮어쓴다.
-            Map<String, Object> metadata = new HashMap<>(chunk.getMetadata());
-            metadata.put(META_SOURCE, fileName);
-            metadata.put(META_FILE_HASH, hash);
-            metadata.put(META_CHUNK_INDEX, chunkIndex++);
-            enriched.add(new Document(text, metadata));
+            for (Section section : splitByHeading(text)) {
+                List<Document> parts =
+                        this.splitter.apply(List.of(new Document(section.body(), raw.getMetadata())));
+                for (Document part : parts) {
+                    String body = part.getText();
+                    if (body == null || body.isBlank()) {
+                        continue;
+                    }
+                    // 리더가 넣어준 메타데이터를 살리되, 출처 키는 우리가 확정적으로 덮어쓴다.
+                    Map<String, Object> metadata = new HashMap<>(part.getMetadata());
+                    metadata.put(META_SOURCE, fileName);
+                    metadata.put(META_FILE_HASH, hash);
+                    metadata.put(META_CHUNK_INDEX, chunkIndex++);
+                    metadata.put(META_HEADING, section.path());
+                    enriched.add(new Document(withHeading(section.path(), body), metadata));
+                }
+            }
         }
         return enriched;
+    }
+
+    /**
+     * 조각 맨 앞에 제목 경로를 붙인다. 목록이 조각 경계에서 잘리면 뒷조각이 어느 절
+     * 소속인지 알 수 없어, 모델이 항목을 빠뜨리거나 엉뚱한 절에 붙이는 문제가 있었다.
+     */
+    private String withHeading(String path, String body) {
+        return path.isEmpty() ? body : "[" + path + "]\n" + body;
+    }
+
+    /**
+     * 마크다운 제목으로 먼저 끊는다. 짧은 절은 통째로 한 조각이 되므로 세 항목짜리
+     * 목록이 둘로 갈리지 않는다. 제목이 없는 문서(PDF 등)는 경로가 빈 섹션 하나가 된다.
+     */
+    private List<Section> splitByHeading(String text) {
+        List<Section> sections = new ArrayList<>();
+        String[] titles = new String[7];
+        StringBuilder body = new StringBuilder();
+        String path = "";
+
+        for (String line : text.split("\\R", -1)) {
+            Matcher matcher = HEADING.matcher(line);
+            if (!matcher.matches()) {
+                body.append(line).append('\n');
+                continue;
+            }
+            addSection(sections, path, body);
+            body.setLength(0);
+            int level = matcher.group(1).length();
+            titles[level] = matcher.group(2).strip();
+            for (int deeper = level + 1; deeper < titles.length; deeper++) {
+                titles[deeper] = null;
+            }
+            path = headingPath(titles);
+        }
+        addSection(sections, path, body);
+        return sections;
+    }
+
+    /** 모아둔 본문에 내용이 있을 때만 섹션으로 만들어 담는다. */
+    private void addSection(List<Section> sections, String path, StringBuilder body) {
+        String text = body.toString().strip();
+        if (!text.isEmpty()) {
+            sections.add(new Section(path, text));
+        }
+    }
+
+    private String headingPath(String[] titles) {
+        StringBuilder path = new StringBuilder();
+        for (String title : titles) {
+            if (title == null) {
+                continue;
+            }
+            if (!path.isEmpty()) {
+                path.append(" > ");
+            }
+            path.append(title);
+        }
+        return path.toString();
     }
 
     /** 특정 파일에서 나온 청크 전부 삭제. source 메타데이터로 걸러낸다. */
@@ -190,11 +289,16 @@ public class IngestService {
         }
     }
 
+    /** 제목 경로와 그 아래 본문. 제목이 없는 문서는 경로가 빈 섹션 하나가 된다. */
+    private record Section(String path, String body) {
+    }
+
     public enum Status {
         /** 새로 적재됨 */ ADDED,
         /** 내용이 바뀌어 재적재됨 */ UPDATED,
         /** 변경 없어 건너뜀 */ SKIPPED,
-        /** 텍스트 추출 실패 */ EMPTY
+        /** 텍스트 추출 실패 */ EMPTY,
+        /** 폴더에서 사라져 청크와 기록을 지움 */ REMOVED
     }
 
     public record FileIngestResult(String fileName, Status status, int chunkCount) {
