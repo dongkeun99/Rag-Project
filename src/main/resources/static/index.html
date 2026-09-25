@@ -69,6 +69,22 @@
             margin: 1.75rem 0 0;
         }
 
+        /* 질문하기 옆 보조 버튼. 주 동작이 아니므로 테두리만 남긴다. */
+        #reset {
+            background: transparent;
+            border-color: var(--rule);
+            color: var(--ink);
+            font-weight: 500;
+        }
+
+        #reset:hover:not(:disabled) { background: var(--surface); }
+
+        #answer-time {
+            margin-left: .125rem;
+            color: var(--muted);
+            font-weight: 500;
+        }
+
         textarea {
             flex: 1;
             min-height: 3.25rem;
@@ -135,12 +151,19 @@
 
         .block > h2 { margin-bottom: .75rem; }
 
+        /* 근거 목록이 길어 아래로 내려가도 이전·다음을 계속 누를 수 있게 위에 붙여 둔다. */
         .sources-head {
+            position: sticky;
+            top: 0;
+            z-index: 5;
             display: flex;
             flex-wrap: wrap;
             align-items: baseline;
             justify-content: space-between;
             gap: .5rem 1rem;
+            margin: 0 -1rem;
+            padding: .625rem 1rem;
+            background: var(--bg);
         }
 
         .nav {
@@ -247,6 +270,59 @@
 
         .score { flex: none; font-weight: 600; }
 
+        .hint { flex: none; color: var(--muted); font-size: .8125rem; }
+
+        /* ---------- 근거 전문 모달 ---------- */
+        /* 목록의 발췌는 200자에서 잘리므로, 잘리지 않은 원문은 여기서 본다. */
+        #detail {
+            width: min(42rem, calc(100vw - 2rem));
+            max-height: min(80vh, 44rem);
+            padding: 0;
+            border: 1px solid var(--rule);
+            border-radius: var(--radius);
+            background: var(--surface);
+            color: var(--ink);
+        }
+
+        #detail::backdrop { background: rgba(26, 29, 26, .45); }
+
+        .detail-head {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 1rem;
+            padding: 1rem 1.375rem;
+            border-bottom: 1px solid var(--rule);
+        }
+
+        #detail-title {
+            overflow-wrap: anywhere;
+            color: var(--ink);
+        }
+
+        #detail-close {
+            padding: .3125rem .6875rem;
+            background: transparent;
+            border-color: var(--rule);
+            color: var(--ink);
+            font-size: .8125rem;
+            font-weight: 500;
+        }
+
+        #detail-close:hover:not(:disabled) { background: var(--bg); }
+
+        #detail-text {
+            margin: 0;
+            padding: 1.25rem 1.375rem;
+            max-height: calc(min(80vh, 44rem) - 3.75rem);
+            overflow-y: auto;
+            font-family: inherit;
+            font-size: .9375rem;
+            line-height: 1.75;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+
         /* 점수 막대 — 이 화면의 핵심. 기준선 대비 여유를 보여준다. */
         .gauge {
             position: relative;
@@ -343,12 +419,13 @@
     <textarea id="question" rows="2"
               placeholder="적재한 문서에 대해 물어보세요. 예) 실행환경의 다섯 가지 서비스 그룹이 뭔가요?"></textarea>
         <button type="submit" id="submit">질문하기</button>
+        <button type="button" id="reset">초기화</button>
     </form>
 
     <p id="status"></p>
 
     <section class="block" id="answer-block" hidden>
-        <h2>답변</h2>
+        <h2>답변<span id="answer-time"></span></h2>
         <div id="answer"></div>
     </section>
 
@@ -364,6 +441,14 @@
         <p id="threshold-note"></p>
         <ol id="sources"></ol>
     </section>
+
+    <dialog id="detail">
+        <div class="detail-head">
+            <h2 id="detail-title">근거</h2>
+            <button type="button" id="detail-close">닫기</button>
+        </div>
+        <pre id="detail-text"></pre>
+    </dialog>
 
     <details id="manage">
         <summary>적재된 문서</summary>
@@ -399,8 +484,20 @@
             files: document.getElementById("files"),
             reload: document.getElementById("reload"),
             reloadForce: document.getElementById("reload-force"),
-            ingestResult: document.getElementById("ingest-result")
+            ingestResult: document.getElementById("ingest-result"),
+            detail: document.getElementById("detail"),
+            detailTitle: document.getElementById("detail-title"),
+            detailText: document.getElementById("detail-text"),
+            detailClose: document.getElementById("detail-close"),
+            reset: document.getElementById("reset"),
+            answerTime: document.getElementById("answer-time")
         };
+
+        // 근거 번호 -> 근거 전체. 모달에서 전문을 보여줄 때 쓴다.
+        var sourceDetails = {};
+
+        // 질문을 보낸 시각. 답변 제목 옆에 걸린 시간을 적는 데 쓴다.
+        var askBegan = 0;
 
         // 서버가 알려주는 값. 응답이 없으면 막대의 기준선만 생략한다.
         var config = { topK: null, similarityThreshold: null };
@@ -438,14 +535,18 @@
         }
 
         function startTimer() {
-            var began = Date.now();
             stopTimer();
             var tick = function () {
-                var seconds = Math.round((Date.now() - began) / 1000);
+                var seconds = elapsedSeconds();
                 setStatus("답변을 만들고 있습니다 (" + seconds + "초)");
             };
             tick();
             timer = setInterval(tick, 1000);
+        }
+
+        /** 질문을 보낸 뒤 흐른 초. 화면의 경과 표시와 답변 시간이 같은 값을 쓴다. */
+        function elapsedSeconds() {
+            return askBegan ? Math.round((Date.now() - askBegan) / 1000) : 0;
         }
 
         function stopTimer() {
@@ -465,11 +566,13 @@
         function renderSources(list) {
             els.sources.innerHTML = "";
             els.sourcesTitle.textContent = "근거 " + list.length + "건";
+            sourceDetails = {};
 
             list.forEach(function (item) {
                 var score = typeof item.score === "number" ? item.score : 0;
                 var li = document.createElement("li");
                 li.dataset.index = String(item.index);
+                sourceDetails[item.index] = item;
 
                 var gauge = '<div class="gauge"><div class="fill" style="width:' +
                     Math.max(0, Math.min(100, score * 100)).toFixed(1) + '%"></div>';
@@ -484,6 +587,7 @@
                     '<span class="num">' + item.index + '</span>' +
                     '<span class="file">' + escapeHtml(item.source) + '</span>' +
                     '<span class="score">' + score.toFixed(3) + '</span>' +
+                    '<span class="hint">전문 보기</span>' +
                     '</div>' +
                     gauge +
                     '<p class="excerpt">' + escapeHtml(item.excerpt || "") + '</p>';
@@ -522,6 +626,19 @@
             els.next.disabled = activeIndex >= sourceCount;
         }
 
+        /**
+         * 근거 전문을 모달로 띄운다. 목록의 발췌는 200자에서 잘리므로 전문은 여기서 본다.
+         * 본문은 textContent 로 넣어 HTML 이 실행되지 않게 한다(XSS 방지).
+         */
+        function openDetail(index) {
+            var item = sourceDetails[index];
+            if (!item || !els.detail.showModal) { return; }
+            var score = typeof item.score === "number" ? item.score.toFixed(3) : "-";
+            els.detailTitle.textContent = "[" + item.index + "] " + item.source + " · " + score;
+            els.detailText.textContent = item.text || item.excerpt || "";
+            els.detail.showModal();
+        }
+
         function loadCorpus() {
             return api("/api/ingested").then(function (files) {
                 els.files.innerHTML = "";
@@ -549,7 +666,9 @@
 
         function ask(question) {
             busy = true;
+            askBegan = Date.now();
             els.submit.disabled = true;
+            els.answerTime.textContent = "";
             els.answerBlock.hidden = true;
             els.sourcesBlock.hidden = true;
             sourceCount = 0;
@@ -561,6 +680,10 @@
             post("/api/search", { question: question })
                 .then(function (sources) {
                     if (!sources.length) {
+                        // 조각이 없으면 답은 정해져 있다. LLM을 부르지 않아 수십 초를 아낀다.
+                        renderAnswer("문서에서 찾을 수 없습니다.");
+                        els.answerTime.textContent = "(" + elapsedSeconds() + "초)";
+                        els.answerBlock.hidden = false;
                         setStatus("기준 점수를 넘는 문서 조각이 없습니다. 질문을 바꾸거나 문서를 더 넣어보세요.");
                         return null;
                     }
@@ -573,6 +696,7 @@
                     stopTimer();
                     if (!result) { return; }
                     renderAnswer(result.answer);
+                    els.answerTime.textContent = "(" + elapsedSeconds() + "초)";
                     if (result.sources && result.sources.length) {
                         renderSources(result.sources);
                     }
@@ -640,11 +764,25 @@
 
         els.sources.addEventListener("click", function (event) {
             var li = event.target && event.target.closest ? event.target.closest("li") : null;
-            if (li && li.dataset.index) { goTo(li.dataset.index, false); }
+            if (!li || !li.dataset.index) { return; }
+            goTo(li.dataset.index, false);
+            openDetail(li.dataset.index);
+        });
+
+        els.detailClose.addEventListener("click", function () { els.detail.close(); });
+
+        // 바깥 어두운 영역을 누르면 닫는다. 그때 클릭 대상이 dialog 자신이 된다.
+        els.detail.addEventListener("click", function (event) {
+            if (event.target === els.detail) { els.detail.close(); }
         });
 
         els.prev.addEventListener("click", function () { goTo(activeIndex - 1, true); });
         els.next.addEventListener("click", function () { goTo(activeIndex + 1, true); });
+
+        els.reset.addEventListener("click", function () {
+            els.question.value = "";
+            els.question.focus();
+        });
 
         els.reload.addEventListener("click", function () { runIngest(false); });
         els.reloadForce.addEventListener("click", function () { runIngest(true); });
