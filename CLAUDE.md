@@ -21,6 +21,7 @@
 
 - **컴파일**: `./gradlew compileJava` — DB·Ollama 없이 돌아간다. 코드 수정 후 최소한 이것은 통과시킨다.
 - **테스트**: `./gradlew test` — `contextLoads`가 DB에 연결하므로 `rag-postgres`가 떠 있어야 한다.
+- **평가 측정**: `./gradlew evalReport` — 평가 질문 12개를 3회씩 재서 `dev_docs/측정_원자료/`에 보고서를 쓴다. 떠 있는 앱과 Ollama가 필요하고 30분 이상 걸린다. `-Prounds=1 -Ponly=2,11`로 일부만 빨리 볼 수 있다. `@Tag("eval")`이라 `./gradlew test`에서는 제외된다. 재는 방법과 판정 기준은 `dev_docs/평가_질문.md`의 "자동 측정"에 있다. 질문 세트는 `dev_docs/평가질문.yml`이고, 질문을 바꿀 때는 `평가_질문.md`와 함께 고친다.
 - **로컬 서버 실행**: `./gradlew bootRun` (사용자는 IntelliJ에서 `RagApplication`을 실행한다)
   - 기동 로그에서 `Started RagApplication`과 `청킹 설정: chunkSize=250 토큰, minChunkSizeChars=120`을 확인한다.
   - 화면: `http://localhost:8080/`

@@ -61,10 +61,21 @@ public class RagController {
         this.similarityThreshold = similarityThreshold;
     }
 
-    /** 검색만 수행. 검색 품질을 눈으로 확인할 때 쓴다. */
+    /**
+     * 검색만 수행. 검색 품질을 눈으로 확인할 때 쓴다.
+     *
+     * threshold·topK를 넘기면 설정값 대신 그 값으로 조회한다. 임계값은 코퍼스에 딸린 값이라
+     * 문서를 추가할 때마다 무관한 질문의 점수를 다시 재야 하는데, 그러려면 임계값 0으로 볼 수
+     * 있어야 한다. yml을 고쳐 재시작하는 대신 조회 시점에만 덮어쓴다(설정은 그대로 둔다).
+     * 답변(/ask)에는 두지 않는다. 답변 측정은 사용자가 쓰는 설정과 같은 조건이어야 한다.
+     */
     @PostMapping("/search")
-    public List<SourceRef> search(@RequestBody AskRequest request) {
-        return toSourceRefs(retrieve(request.question()));
+    public List<SourceRef> search(@RequestBody AskRequest request,
+                                  @RequestParam(name = "threshold", required = false) Double threshold,
+                                  @RequestParam(name = "topK", required = false) Integer topK) {
+        return toSourceRefs(retrieve(request.question(),
+                topK == null ? this.topK : topK,
+                threshold == null ? this.similarityThreshold : threshold));
     }
 
     /** 검색 + 답변 생성. 답변과 함께 근거 조각을 돌려준다. */
@@ -108,6 +119,10 @@ public class RagController {
     }
 
     private List<Document> retrieve(String question) {
+        return retrieve(question, topK, similarityThreshold);
+    }
+
+    private List<Document> retrieve(String question, int topK, double similarityThreshold) {
         SearchRequest searchRequest = SearchRequest.builder()
                 .query(question)
                 .topK(topK)
