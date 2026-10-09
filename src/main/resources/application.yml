@@ -12,7 +12,12 @@ spring:
         options:
           model: exaone3.5:2.4b
           temperature: 0.2
-          num-predict: 300
+          # 답변 길이 상한. 300에서는 절차형 답변(7·8번)이 문장 중간에서 끊겼다.
+          # 이미지 링크를 걷어내 조각 밀도가 오르면서 답변이 190 → 267~300토큰으로 길어진 탓이다.
+          # 상한을 풀어 재보니 296토큰에서 스스로 멈춰 필요 길이가 300 바로 근처였다.
+          # 프롬프트 최대 약 1,650토큰 + 400 = 2,050으로 num-ctx 4096에 한참 못 미친다.
+          # top-k나 chunk-size를 올리면 이 여유가 줄어드니 같이 봐야 한다. 근거는 dev_docs/7차_개선.md.
+          num-predict: 400
           num-ctx: 4096
       embedding:
         options:
