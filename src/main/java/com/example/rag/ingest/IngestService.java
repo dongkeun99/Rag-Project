@@ -50,6 +50,16 @@ public class IngestService {
     /** 마크다운 제목 줄. 예: "### 연계통합" */
     private static final Pattern HEADING = Pattern.compile("^(#{1,6})\\s+(.+?)\\s*$");
 
+    /** 마크다운 이미지 링크. 예: ![압축해제 완료](./images/decompress.jpg) */
+    private static final Pattern IMAGE_LINK = Pattern.compile("!\\[[^\\]]*\\]\\([^)]*\\)");
+    /** 이미지 링크를 걷어낸 뒤 공백만 남은 줄 */
+    private static final Pattern BLANK_LINE = Pattern.compile("(?m)^[ \\t]+$");
+    /** 빈 줄이 겹친 자리 */
+    private static final Pattern MULTI_NEWLINE = Pattern.compile("\\n{3,}");
+
+    /** 조각 맨 끝에 내용 없이 남은 목록 번호. 예: "…메시지 창이 뜬다.\n\n10." */
+    private static final Pattern TRAILING_LIST_MARKER = Pattern.compile("(?:\\R|^)[ \\t]*\\d+\\.[ \\t]*$");
+
     private final VectorStore vectorStore;
     private final IngestedFileRepository ingestedFiles;
     private final Path docsPath;
@@ -165,7 +175,7 @@ public class IngestService {
         List<Document> enriched = new ArrayList<>();
         int chunkIndex = 0;
         for (Document raw : rawDocuments) {
-            String text = raw.getText();
+            String text = stripImageLinks(raw.getText());
             if (text == null || text.isBlank()) {
                 continue;
             }
@@ -175,6 +185,10 @@ public class IngestService {
                 for (Document part : parts) {
                     String body = part.getText();
                     if (body == null || body.isBlank()) {
+                        continue;
+                    }
+                    body = stripTrailingListMarker(body);
+                    if (body.isBlank()) {
                         continue;
                     }
                     // 리더가 넣어준 메타데이터를 살리되, 출처 키는 우리가 확정적으로 덮어쓴다.
@@ -233,6 +247,38 @@ public class IngestService {
         if (!text.isEmpty()) {
             sections.add(new Section(path, text));
         }
+    }
+
+    /**
+     * 마크다운 이미지 링크를 걷어낸다. 그림 파일은 적재하지 않으므로 이 줄은 조각에
+     * 아무 정보도 주지 못하면서 토큰만 먹는다. alt 텍스트도 같이 지운다 — 191개 중
+     * 37개가 `![image]`이고 나머지도 바로 앞 절차 문장과 겹치는 UI 라벨이다.
+     *
+     * 개발환경·공통컴포넌트 문서는 파일당 10~19개가 들어 있다. "게시판 설치" 질문의
+     * 조각에서는 본문 3,281자 중 898자(27.4%)가 이 링크였고, 걷어내니 프롬프트가
+     * 1,749 → 1,388토큰(-20.6%)으로 줄었다. prefill은 토큰 수에 비례하므로 그만큼
+     * 첫 글자까지의 시간이 준다. 조각이 링크 한가운데에서 잘려 "!" 한 글자만 남던
+     * 것도 사라진다. 근거는 dev_docs/7차_개선.md.
+     */
+    private String stripImageLinks(String text) {
+        if (text == null) {
+            return null;
+        }
+        String stripped = IMAGE_LINK.matcher(text).replaceAll("");
+        stripped = BLANK_LINE.matcher(stripped).replaceAll("");
+        return MULTI_NEWLINE.matcher(stripped).replaceAll("\n\n");
+    }
+
+    /**
+     * 조각 끝에 번호만 외톨이로 남은 것을 뗀다. 250토큰 경계가 "10." 바로 뒤에 떨어지면
+     * 그 항목의 본문은 다음 조각으로 가고 번호만 남는다. 내용이 없으므로 화면의 근거
+     * 모달에도 "10."만 덩그러니 보이고 프롬프트에서는 토큰만 먹는다.
+     *
+     * 이미지 링크와 달리 원문에는 문제가 없고 자르는 자리가 만드는 것이라, 걷어내는
+     * 시점도 파일을 읽을 때가 아니라 조각으로 쪼갠 뒤다. 근거는 dev_docs/7차_개선.md.
+     */
+    private String stripTrailingListMarker(String body) {
+        return TRAILING_LIST_MARKER.matcher(body.stripTrailing()).replaceAll("");
     }
 
     private String headingPath(String[] titles) {
