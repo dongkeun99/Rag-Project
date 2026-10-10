@@ -1,3 +1,9 @@
 /gradlew text eol=lf
 *.bat text eol=crlf
 *.jar binary
+
+# 적재 대상 문서는 줄바꿈을 LF로 고정한다.
+# 적재 기록(ingested_file.file_hash)이 파일 내용의 SHA-256이라 줄바꿈이 바뀌면
+# 해시가 달라져 54개 전부 재적재된다. core.autocrlf=true인 윈도에서 체크아웃하면
+# 규칙이 없을 때 CRLF로 바뀌므로 명시한다.
+/src/main/resources/docs/** text eol=lf
