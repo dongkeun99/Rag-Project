@@ -1,0 +1,60 @@
+# Spring Web Flow
+
+본 문서는 [Spring Framework 6.2 - Spring MVC](https://docs.spring.io/spring-framework/reference/6.2/web/webmvc.html)(Web on Servlet Stack)와의 통합 관점에서 Spring Web Flow(SWF)를 설명한다. Spring Framework 6.2에서는 **DispatcherServlet**이 요청을 처리하고 핸들러 매핑·뷰 해석을 담당하며, SWF는 그 위에서 Flow를 하나의 **핸들러** 유형으로 동작시킨다.
+
+## 개요
+
+Spring Web Flow(SWF)는 웹 애플리케이션 내 **페이지 흐름(flow)** 의 정의와 수행에 집중하는 컴포넌트이다. Spring Framework의 코어·웹 모듈 위에 동작하는 **자족적인 페이지 흐름 엔진**으로, Spring MVC, Portlet MVC, JSF 등과 통합된다.
+
+시스템은 다른 위치에서 재사용될 수 있는 자족적 모듈처럼 웹 애플리케이션의 논리적 흐름(flow)을 획득하는 것을 허용한다.<br>
+이러한 흐름(flow)은 비즈니스 프로세스의 구현을 통해 단일 사용자를 안내하고 단일 사용자 대화를 표현한다.<br>
+흐름(flow)은 종종 HTTP 요청을 처리하고 상태를 가지며, 트랜잭션 특성을 보이고 동적이거나 장시간 구동될 수 있다.
+
+Spring Web Flow는 추상화의 더 높은 레벨에 존재하며, [Spring MVC](https://docs.spring.io/spring-framework/reference/6.2/web/webmvc.html) 내에서 **DispatcherServlet**이 요청 매핑과 뷰 표현을 담당하는 컨트롤러 기술 위에 SWF 전용 통합 조각(FlowHandlerAdapter 등)을 두어 동작한다.<br>
+SWF는 선언적이고 이식성이 높으며 관리하기 쉬운 형태로 애플리케이션의 페이지 흐름(flow)을 정의한다.
+
+
+## 설명
+Spring Web Flow는 여타의 API에 대한 몇 가지 요구 의존성을 가진 자족적인 page flow engine처럼 구조화되었다. 모든 의존성은 주의 깊게 관리된다.
+
+대부분의 사용자들은 좀 더 큰 웹 애플리케이션 개발 프레임워크 내 컴포넌트로 SWF를 끼워 넣을 것이다.<br>
+SWF는 요청 맵핑과 응답 표현을 다루기 위한 호출 시스템을 기대하는 컨트롤러 기술에 집중한다.<br>
+이 경우, 이러한 사용자는 환경을 위한 가는(thin) 통합 조각에 의존할 것이다.<br>
+예를 들어, Servlet 내 수행 흐름(flow)은 SWF에 대한 요청에 대한 할당(dispatch)과 SWF view 선택을 책임지는 표현을 다루는 Spring MVC 통합을 사용한다.<br>
+
+Spring과 마찬가지로, Spring Web Flow는 필요한 부분만 선택적으로 사용할 수 있는 계층화된(layered) 프레임워크로 패키징되어 있다.<br>
+SWF의 중요한 이득은 어떤 환경에서도 수행될 수 있는 자족적인 컨트롤러의 모듈을 재사용하여 정의할 수 있도록 하는 것이다.
+
+구체적인 내용을 살펴보기 전에 Hello World를 실행해 보자.
+- [Hello world](./swf-getting-started-hello-world.md)
+
+Spring Web Flow의 기본 샘플로 Spring Source에서는 Hotel Booking 을 제공하고 있다.<br>
+우리는 Spring Web Flow 레퍼런스 문서를 기준으로 하고 샘플인 Hotel Booking 을 참고하는 형태로 설명하도록 하겠다.
+
+Hotel Booking 샘플 데모 : 🌏 [http://richweb.springframework.org/swf-booking-faces/spring/intro](https://web.archive.org/web/20110615224534/http://richweb.springframework.org/swf-booking-faces/spring/intro)
+
+### SWF Configuration
+
+- [SWF 시스템 설정](./swf-configuration-setting-system.md)
+- [Spring Web Flow 와 MVC 연동](./swf-configuration-with-spring-mvc.md)
+- [Securing Flows](./swf-configuration-securing-flows.md)
+- [Flow Managed Persistence](./swf-configuration-flow-managed-persistence.md)
+
+### SWF
+
+- [Getting Started -Hello world](./swf-getting-started-hello-world.md)
+- [Flow Definition](./swf-elements-flow-definiton.md)
+- [Expression Language](./swf-elements-expression-language.md)
+- [Rendering Views](./swf-elements-rendering-views.md)
+- [Executing actions](./swf-elements-executing-actions.md)
+- [Flow Inheritance](./swf-elements-flow-inheritance.md)
+
+
+## 참고 문서
+
+- [The IoC Container - Spring Framework 6.2](https://docs.spring.io/spring-framework/reference/6.2/core/beans.html): Bean 정의, FlowHandler 등 빈 등록
+- [Spring Framework 6.2 - Spring MVC (Web on Servlet Stack)](https://docs.spring.io/spring-framework/reference/6.2/web/webmvc.html): DispatcherServlet, Annotated Controllers, 뷰 기술
+- [Spring Framework 6.2 - DispatcherServlet](https://docs.spring.io/spring-framework/reference/6.2/web/webmvc/dispatcher-servlet.html): 요청 처리, 컨텍스트 계층, 핸들러 매핑
+- [Spring Framework 6.2 - Overview](https://docs.spring.io/spring-framework/reference/6.2/overview.html): Spring Framework 개요, 모듈, 설계 철학
+- [Spring Web Flow reference 2.3.x](https://docs.spring.io/spring-webflow/docs/2.3.x/reference/html/index.html)
+- [openframework swf 소개](https://web.archive.org/web/20060619222620/http://openframework.or.kr:80/framework_reference/spring-webflow/1.0RC1/html/introduction.html)
