@@ -25,6 +25,12 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-data-jdbc'
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
 	implementation 'org.springframework.ai:spring-ai-starter-model-ollama'
+	// 배포 프로필의 답변 모델용. Cloudflare Workers AI가 OpenAI 호환 엔드포인트를 주므로
+	// base-url만 바꿔 이 스타터로 받는다. 임베딩은 이 스타터를 타지 않는다 — Cloudflare
+	// 임베딩 응답에 usage가 없어 공식 OpenAI SDK가 거부해서, CloudflareEmbeddingModel이
+	// 직접 호출한다(근거는 그 클래스 주석과 project_status.md §7).
+	// 로컬 프로필은 위의 ollama를 계속 쓴다 — 측정 보고서의 비교선이 exaone3.5:2.4b다.
+	implementation 'org.springframework.ai:spring-ai-starter-model-openai'
 	implementation 'org.springframework.ai:spring-ai-starter-vector-store-pgvector'
 	implementation 'org.springframework.ai:spring-ai-vector-store-advisor'
 	implementation 'org.springframework.ai:spring-ai-tika-document-reader'

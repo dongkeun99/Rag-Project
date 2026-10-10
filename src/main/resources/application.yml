@@ -6,6 +6,21 @@ spring:
     driver-class-name: org.postgresql.Driver
 
   ai:
+    # 스타터가 ollama·openai 둘이라 어느 것을 쓸지 못 박는다. Spring AI의 기본값이
+    # openai라서 적지 않으면 로컬이 키도 없는 OpenAI로 기운다. 배포 프로필에서만 openai로 바꾼다.
+    model:
+      chat: ollama
+      embedding: ollama
+      # OpenAI 스타터는 chat·embedding 외에 image·audio·moderation까지 자동 설정하고,
+      # 그쪽은 위의 chat·embedding 선택으로 꺼지지 않는다. 키가 없으면 기동 중
+      # "At least one credential source must be specified"로 죽는다(실제로 겪음).
+      # 이 앱은 네 가지를 쓰지 않으니 프로필과 무관하게 전부 끈다.
+      image: none
+      moderation: none
+      audio:
+        speech: none
+        transcription: none
+
     ollama:
       base-url: http://localhost:11434
       chat:
