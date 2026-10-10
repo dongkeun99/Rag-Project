@@ -8,24 +8,27 @@ import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.Filter;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
+import org.springframework.core.io.support.ResourcePatternResolver;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.io.InputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
  * 폴더 안의 문서를 읽어 청킹 → 임베딩 → pgvector 적재.
@@ -60,9 +63,15 @@ public class IngestService {
     /** 조각 맨 끝에 내용 없이 남은 목록 번호. 예: "…메시지 창이 뜬다.\n\n10." */
     private static final Pattern TRAILING_LIST_MARKER = Pattern.compile("(?:\\R|^)[ \\t]*\\d+\\.[ \\t]*$");
 
+    /** Spring 리소스 위치의 접두. 이 중 하나로 시작하지 않으면 파일시스템 경로로 본다. */
+    private static final List<String> RESOURCE_PREFIXES =
+            List.of(ResourcePatternResolver.CLASSPATH_ALL_URL_PREFIX, "classpath:", "file:");
+
     private final VectorStore vectorStore;
     private final IngestedFileRepository ingestedFiles;
-    private final Path docsPath;
+    /** 문서 위치. Spring 리소스 표기라서 파일시스템과 jar 안을 같은 코드로 읽는다. */
+    private final String docsLocation;
+    private final ResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
     private final TokenTextSplitter splitter;
 
     public IngestService(VectorStore vectorStore,
@@ -72,7 +81,7 @@ public class IngestService {
                          @Value("${rag.min-chunk-size-chars:120}") int minChunkSizeChars) {
         this.vectorStore = vectorStore;
         this.ingestedFiles = ingestedFiles;
-        this.docsPath = Path.of(docsPath);
+        this.docsLocation = toResourceLocation(docsPath);
         // 기본값(800토큰/350자)은 한글 문서에 너무 커서 청크 하나에 여러 주제가 섞인다.
         this.splitter = TokenTextSplitter.builder()
                 .withChunkSize(chunkSize)
@@ -80,6 +89,23 @@ public class IngestService {
                 .withMinChunkLengthToEmbed(30)
                 .build();
         log.info("청킹 설정: chunkSize={} 토큰, minChunkSizeChars={}", chunkSize, minChunkSizeChars);
+        log.info("문서 위치: {}", this.docsLocation);
+    }
+
+    /**
+     * 설정값을 Spring 리소스 위치로 맞춘다. 배포 환경에는 D:/dev/rag-docs 같은 로컬 경로가
+     * 없어서 문서를 jar 안에 넣어야 하는데, classpath를 받으려면 표기가 필요하다.
+     *
+     * 접두가 없으면 파일시스템으로 본다. 이게 없으면 Spring이 접두 없는 경로를 classpath로
+     * 해석해서 기존 설정(D:/dev/rag-docs)이 조용히 깨진다. 윈도 경로는 "D:"처럼 콜론이
+     * 들어 있으므로 콜론 유무로 판단하면 안 되고, 알려진 접두와 맞춰 봐야 한다.
+     */
+    private static String toResourceLocation(String docsPath) {
+        String trimmed = docsPath.strip();
+        String location = RESOURCE_PREFIXES.stream().anyMatch(trimmed::startsWith)
+                ? trimmed
+                : "file:" + trimmed;
+        return location.endsWith("/") ? location.substring(0, location.length() - 1) : location;
     }
 
     /**
@@ -89,29 +115,37 @@ public class IngestService {
      *              청킹 설정을 바꿔 실험할 때 쓴다.
      */
     public List<FileIngestResult> ingestAll(boolean force) throws IOException {
-        if (!Files.isDirectory(docsPath)) {
-            throw new IllegalStateException("문서 폴더를 찾을 수 없습니다: " + docsPath.toAbsolutePath());
+        Resource[] found;
+        try {
+            found = resolver.getResources(docsLocation + "/*");
+        } catch (IOException e) {
+            // 위치 자체를 못 읽으면 적재 기록을 건드리기 전에 멈춘다.
+            throw new IllegalStateException("문서 위치를 읽을 수 없습니다: " + docsLocation, e);
         }
 
-        List<Path> targets;
-        try (Stream<Path> files = Files.list(docsPath)) {
-            targets = files.filter(Files::isRegularFile)
-                    .filter(this::isSupported)
-                    .sorted()
-                    .toList();
-        }
+        List<Resource> targets = Arrays.stream(found)
+                .filter(Resource::isReadable)
+                .filter(this::isSupported)
+                .sorted(Comparator.comparing(IngestService::fileNameOf))
+                .toList();
 
         if (targets.isEmpty()) {
-            log.warn("적재할 문서가 없습니다: {}", docsPath.toAbsolutePath());
+            log.warn("적재할 문서가 없습니다: {}", docsLocation);
             return List.of();
         }
 
-        // 폴더가 기준이다. 폴더에서 사라진 파일을 먼저 걷어낸 뒤 적재한다.
+        // 문서 위치가 기준이다. 거기서 사라진 파일을 먼저 걷어낸 뒤 적재한다.
         List<FileIngestResult> results = new ArrayList<>(removeOrphans(targets));
-        for (Path file : targets) {
+        for (Resource file : targets) {
             results.add(ingestOne(file, force));
         }
         return results;
+    }
+
+    /** 리소스의 파일명. 적재 기록과 출처 메타데이터의 키라서 경로 없이 이름만 쓴다. */
+    private static String fileNameOf(Resource resource) {
+        return Objects.requireNonNull(resource.getFilename(),
+                () -> "파일명을 알 수 없는 리소스입니다: " + resource.getDescription());
     }
 
     /**
@@ -119,9 +153,9 @@ public class IngestService {
      * 이게 없으면 문서를 폴더에서 빼도 청크가 DB에 남아 검색 결과에 끼어든다.
      * 대상 파일이 하나도 없으면 ingestAll이 먼저 빠져나가므로, 경로를 잘못 잡아 전부 지우는 일은 없다.
      */
-    private List<FileIngestResult> removeOrphans(List<Path> targets) {
+    private List<FileIngestResult> removeOrphans(List<Resource> targets) {
         Set<String> present = targets.stream()
-                .map(path -> path.getFileName().toString())
+                .map(IngestService::fileNameOf)
                 .collect(Collectors.toSet());
 
         List<FileIngestResult> removed = new ArrayList<>();
@@ -135,8 +169,8 @@ public class IngestService {
         return removed;
     }
 
-    private FileIngestResult ingestOne(Path file, boolean force) throws IOException {
-        String fileName = file.getFileName().toString();
+    private FileIngestResult ingestOne(Resource file, boolean force) throws IOException {
+        String fileName = fileNameOf(file);
         String hash = sha256(file);
 
         Optional<String> storedHash = ingestedFiles.findHash(fileName);
@@ -168,8 +202,8 @@ public class IngestService {
     }
 
     /** 파일 하나를 읽어 절 단위로 나눈 뒤 청크로 쪼개고, 각 청크에 메타데이터를 붙인다. */
-    private List<Document> readAndSplit(Path file, String fileName, String hash) {
-        TikaDocumentReader reader = new TikaDocumentReader(new FileSystemResource(file));
+    private List<Document> readAndSplit(Resource file, String fileName, String hash) {
+        TikaDocumentReader reader = new TikaDocumentReader(file);
         List<Document> rawDocuments = reader.read();
 
         List<Document> enriched = new ArrayList<>();
@@ -314,17 +348,24 @@ public class IngestService {
         return ingestedFiles.findAll();
     }
 
-    private boolean isSupported(Path file) {
-        String name = file.getFileName().toString().toLowerCase();
+    private boolean isSupported(Resource file) {
+        String fileName = file.getFilename();
+        if (fileName == null) {
+            return false;
+        }
+        String name = fileName.toLowerCase();
         int dot = name.lastIndexOf('.');
         return dot > 0 && SUPPORTED_EXTENSIONS.contains(name.substring(dot + 1));
     }
 
-    /** 파일 내용이 바뀌었는지 판단하는 기준값. 수정 날짜는 내용이 같아도 바뀌므로 해시를 쓴다. */
-    private String sha256(Path file) throws IOException {
-        try {
+    /**
+     * 파일 내용이 바뀌었는지 판단하는 기준값. 수정 날짜는 내용이 같아도 바뀌므로 해시를 쓴다.
+     * 내용만 넣으므로 파일을 폴더에서 jar로 옮겨도 해시가 같다 — 위치를 바꿨다고 재적재되지 않는다.
+     */
+    private String sha256(Resource file) throws IOException {
+        try (InputStream in = file.getInputStream()) {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hashed = digest.digest(Files.readAllBytes(file));
+            byte[] hashed = digest.digest(in.readAllBytes());
             StringBuilder sb = new StringBuilder(hashed.length * 2);
             for (byte b : hashed) {
                 sb.append(String.format("%02x", b));
