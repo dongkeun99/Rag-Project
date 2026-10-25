@@ -1,10 +1,14 @@
 # Rag-Project
 
-로컬 환경에서 동작하는 RAG(Retrieval-Augmented Generation) 시스템을 처음부터 끝까지 직접 구축한 개인 학습 프로젝트입니다.
+RAG(Retrieval-Augmented Generation) 시스템을 처음부터 끝까지 직접 구축한 개인 학습 프로젝트입니다. 폴더에 문서를 넣으면, 그 문서에 근거해서만 답하고 어느 문서에서 찾았는지 출처까지 보여 줍니다.
 
-외부 API나 유료 서비스 없이 **전부 로컬에서 돌아가는 파이프라인**을 목표로 했습니다. 폴더에 문서를 넣으면, 그 문서에 근거해서만 답하고 어느 문서에서 찾았는지 출처까지 보여 주는 질의응답 서비스가 결과물입니다.
+**▶ 배포된 데모: <https://rag-zxay.onrender.com>**
 
-> 구현 과정과 개선 내용은 [`dev_docs`](dev_docs/)에 단계별로 정리했습니다. → [1차 구현](dev_docs/1차_구현.md) · [2차 개선](dev_docs/2차_개선.md) · [3차 개선](dev_docs/3차_개선.md) · [4차 개선](dev_docs/4차_개선.md) · [5차 개선](dev_docs/5차_개선.md) · [6차 개선](dev_docs/6차_개선.md) · [7차 개선](dev_docs/7차_개선.md)
+개발은 **전부 로컬에서 돌아가는 파이프라인**(Ollama + Docker PostgreSQL)으로 했고, 배포는 같은 코드를 프로필만 바꿔 올렸습니다. 배포 구성도 **전부 무료 티어**입니다 — DB는 Supabase, 임베딩과 답변은 Cloudflare Workers AI, 호스팅은 Render입니다.
+
+> 무료 플랜이라 15분간 요청이 없으면 서버가 잠듭니다. 첫 질문은 깨어나는 데 1분쯤 걸릴 수 있습니다.
+
+> 구현 과정과 개선 내용은 [`dev_docs`](dev_docs/)에 단계별로 정리했습니다. → [1차 구현](dev_docs/1차_구현.md) · [2차 개선](dev_docs/2차_개선.md) · [3차 개선](dev_docs/3차_개선.md) · [4차 개선](dev_docs/4차_개선.md) · [5차 개선](dev_docs/5차_개선.md) · [6차 개선](dev_docs/6차_개선.md) · [7차 개선](dev_docs/7차_개선.md) · [8차 개선](dev_docs/8차_개선.md)
 
 ---
 
@@ -98,6 +102,16 @@ flowchart TB
 | 화면        | HTML · CSS · JS                            | 정적 파일 한 장, 빌드 없음  |
 | 빌드 / 실행 | Gradle / Docker Desktop (WSL2)             |                             |
 
+배포(`prod` 프로필)에서는 모델 제공처와 DB만 바뀝니다. 코드는 같습니다.
+
+| 구분        | 기술                                       | 비고                        |
+| ----------- | ------------------------------------------ | --------------------------- |
+| 호스팅      | Render (무료)                              | Dockerfile 빌드, 0.1 CPU / 512MB |
+| 벡터 DB     | Supabase PostgreSQL + pgvector             | 서울 리전, 세션 풀러로 접속 |
+| 임베딩 모델 | `@cf/baai/bge-m3` (Cloudflare Workers AI)  | **로컬과 같은 모델** — 적재된 벡터를 그대로 사용 |
+| 답변 모델   | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` | 하루 10,000 뉴런 무료       |
+| keep-alive  | cron-job.org (무료)                        | Render 정지 · Supabase 일시정지 방지 |
+
 ### 왜 이 기술인가
 
 - **Java + Spring AI** — 업무 스택이 Java/Spring이라 RAG 개념과 실무 스택을 함께 익히려고 골랐습니다. Spring AI가 Python의 LangChain 역할을 합니다.
@@ -105,6 +119,7 @@ flowchart TB
 - **Ollama (로컬 LLM)** — 비용이 들지 않고, 오프라인으로 동작하며, 문서가 외부로 나가지 않습니다.
 - **bge-m3** — 한국어 문서 검색에서 검증된 다국어 임베딩 모델입니다.
 - **exaone3.5:2.4b** — 한국어 답변 품질과 응답 속도(7.8b 약 2분 30초 → 약 20초)를 함께 보고 골랐습니다.
+- **배포는 무료 티어만** — 호스팅·DB·LLM 모두 무료 한도 안에서 고르고, 한도가 실사용량을 감당하는지 숫자로 확인한 뒤 정했습니다. 로컬 프로필을 Ollama로 남긴 것도 의도적입니다 — 측정 보고서의 비교선이 `exaone3.5:2.4b`라 갈아치우면 이전 회차와 비교할 수 없습니다.
 
 자세한 선택 이유는 [1차 구현 – 기술 선택 이유](dev_docs/1차_구현.md#기술-선택-이유), 답변 모델을 바꾼 과정은 [2차 개선 – 답변 모델과 생성 옵션](dev_docs/2차_개선.md#9-답변-모델과-생성-옵션)에 있습니다.
 
@@ -118,14 +133,21 @@ rag
 │   ├── RagApplication.java
 │   ├── api
 │   │   └── RagController.java           # 검색 · 질의 · 적재 API
+│   ├── ai                               # 배포 프로필 전용 모델 어댑터
+│   │   ├── CloudflareEmbeddingModel.java  # 임베딩 (응답에 usage가 없어 직접 구현)
+│   │   └── CloudflareChatStreamer.java    # 스트리밍 (숫자 조각을 JSON 숫자로 보내서 직접 구현)
 │   └── ingest
 │       ├── IngestService.java           # 폴더 스캔 → 청킹 → 임베딩 → 적재
 │       └── IngestedFileRepository.java  # 적재 기록 (ingested_file 테이블)
 ├── src/main/resources
-│   ├── application.yml                  # 모델 · DB · 검색 설정
+│   ├── application.yml                  # 모델 · DB · 검색 설정 (로컬)
+│   ├── application-prod.yml             # 배포 설정 (Supabase · Cloudflare)
+│   ├── docs                             # 적재 대상 문서 (jar에 포함)
 │   └── static/index.html                # 질의 화면
 ├── src/test/java/com/example/rag/eval   # 평가 측정 하네스 (./gradlew evalReport)
 ├── dev_docs                             # 단계별 개발 기록
+├── Dockerfile                           # 배포 이미지 (temurin 25)
+├── render.yaml                          # Render 배포 설계도 (Blueprint)
 └── docker-compose.yml                   # PostgreSQL + pgvector 컨테이너
 ```
 
@@ -200,6 +222,27 @@ curl -N "http://localhost:8080/api/ask/stream?question=Integration%20서비스�
 - [ ] Ollama 실행
 - [ ] 애플리케이션 실행
 
+### 배포 프로필로 실행하기
+
+Docker도 Ollama도 필요 없습니다. 외부 DB와 LLM을 쓰기 때문입니다.
+
+1. 프로젝트 루트에 `.env`를 만들고 `.env.example`의 다섯 값을 채웁니다 — `DB_URL`,
+   `DB_USERNAME`(`postgres.<project-ref>` 형식), `DB_PASSWORD`, `CF_ACCOUNT_ID`, `CF_API_TOKEN`
+2. `SPRING_PROFILES_ACTIVE=prod`로 실행합니다. 비밀값은 `application-prod.yml`의
+   `spring.config.import`가 `.env`에서 읽습니다.
+
+기동 로그에서 세 줄을 확인합니다. **활성 프로필 줄만 보고 판단하면 안 됩니다** — jar가 낡으면
+프로필은 `prod`인데 문서 위치가 로컬 경로로 찍힙니다.
+
+```
+The following 1 profile is active: "prod"
+Cloudflare 임베딩 사용: model=@cf/baai/bge-m3, dimensions=1024
+문서 위치: classpath:docs
+```
+
+호스팅에 올릴 때는 `.env` 대신 대시보드 환경변수를 씁니다. OS 환경변수가 `.env`보다 우선하므로
+설정 파일은 그대로 두면 됩니다. Render는 저장소의 `render.yaml`을 읽어 서비스를 만듭니다.
+
 ---
 
 ## 개발 기록
@@ -213,6 +256,7 @@ curl -N "http://localhost:8080/api/ask/stream?question=Integration%20서비스�
 | [5차 개선](dev_docs/5차_개선.md) | 평가 측정 자동화(`evalReport`), 기준선 측정, 인용 번호·우선순위 기록 정정 |
 | [6차 개선](dev_docs/6차_개선.md) | SSE 스트리밍 답변, 화면의 중복 검색 제거 |
 | [7차 개선](dev_docs/7차_개선.md) | 답변 지연을 prefill/decode로 분해해 측정, 적재 시 이미지 링크·외톨이 목록 번호 제거, `num-predict` 400 |
+| [8차 개선](dev_docs/8차_개선.md) | Render 무료 플랜 배포(Supabase · Cloudflare Workers AI), keep-alive 크론, 답변 모델 교체를 12문항으로 확정, 스트리밍이 숫자에서 끊기던 버그 수정 |
 
 각 문서에 구현 과정, 트러블슈팅, 실행 결과, 배운 점을 정리했습니다.
 
@@ -224,9 +268,10 @@ curl -N "http://localhost:8080/api/ask/stream?question=Integration%20서비스�
 | [2026-09-26](dev_docs/질문_측정결과_0926.md) | 6~7차 | 공통컴포넌트·개발환경 30개 적재, 임계값 0.40→0.50 |
 | 2026-10-03 | 기준선 | 측정 자동화 후 첫 측정. 보고서는 [`dev_docs/측정_원자료/`](dev_docs/측정_원자료/)에 쌓입니다 → [5차 개선](dev_docs/5차_개선.md) |
 | 2026-10-10 | 이미지링크제거 | 이미지 링크 제거 후 퇴행 확인. 10번이 5개 → 8개 나열로 바뀜 → [7차 개선](dev_docs/7차_개선.md) |
+| 2026-10-25 | 모델 교체 | 교체 전·후와 인용 강제까지 네 라운드를 같은 날 연속 측정. 11번 할루시네이션이 0/3 → 3/3 → [8차 개선](dev_docs/8차_개선.md) |
 
 ---
 
 ## 라이선스
 
-개인 학습 목적의 프로젝트입니다. 답변 모델 EXAONE 3.5는 연구/비상업 목적 라이선스이므로, 상업적으로 쓰려면 답변 모델을 바꿔야 합니다.
+개인 학습 목적의 프로젝트입니다. 로컬 프로필의 답변 모델 EXAONE 3.5는 연구/비상업 목적 라이선스이므로, 상업적으로 쓰려면 답변 모델을 바꿔야 합니다. 배포 프로필은 Cloudflare Workers AI의 Llama 3.3을 씁니다.
