@@ -13,6 +13,23 @@ services:
     # index.html이 200을 돌려준다. 별도 헬스 엔드포인트를 두지 않았다.
     healthCheckPath: /
     autoDeployTrigger: commit
+    # 기록 문서(README·dev_docs)만 고친 푸시로는 재배포하지 않는다. 무료 인스턴스는
+    # 재배포 중 잠깐 끊기고 빌드 시간에도 한도가 있어서, 배포 결과물이 달라지지 않는
+    # 변경은 거른다.
+    #
+    # **지우는 목록(ignoredPaths)이 아니라 담는 목록(paths)으로 쓴다.** `**/*.md`로
+    # 거르면 적재 대상 문서(src/main/resources/docs/*.md)까지 걸려서, 문서를 추가하고
+    # 푸시해도 배포가 안 되는 사고가 난다. src/main/** 안에 그 문서들이 있다.
+    buildFilter:
+      paths:
+        - "src/main/**"
+        - "build.gradle"
+        - "settings.gradle"
+        - "gradle/**"
+        - "gradlew"
+        - "Dockerfile"
+        - ".dockerignore"
+        - "render.yaml"
     envVars:
       - key: SPRING_PROFILES_ACTIVE
         value: prod
