@@ -1,3 +1,8 @@
+# 호스팅은 PORT 환경변수로 쓸 포트를 알려준다(Render는 기본 10000). 그 값이 없으면
+# 로컬처럼 8080으로 뜬다. 바인딩 주소는 기본값 0.0.0.0이라 따로 적지 않는다.
+server:
+  port: ${PORT:8080}
+
 spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/ragdb

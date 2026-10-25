@@ -1,0 +1,29 @@
+# Render 배포 설계도(Blueprint). 대시보드에서 손으로 누른 설정이 아니라 이 파일이
+# 서비스 구성을 정한다. 값이 비밀인 것은 sync: false로 두고 대시보드에서 넣는다.
+services:
+  - name: rag
+    type: web
+    # Java는 Render의 네이티브 런타임이 아니라 Dockerfile로 빌드한다.
+    runtime: docker
+    # 0.1 CPU / 512MB. 15분간 요청이 없으면 정지하고 다음 요청에 약 1분 걸려 깨어난다.
+    plan: free
+    # Render의 다섯 리전 중 Supabase(서울)에 가장 가깝다.
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    # index.html이 200을 돌려준다. 별도 헬스 엔드포인트를 두지 않았다.
+    healthCheckPath: /
+    autoDeployTrigger: commit
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: prod
+      # 아래 다섯은 .env에 있는 값과 같다. 저장소에는 올리지 않는다.
+      - key: DB_URL
+        sync: false
+      - key: DB_USERNAME
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: CF_ACCOUNT_ID
+        sync: false
+      - key: CF_API_TOKEN
+        sync: false

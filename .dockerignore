@@ -1,0 +1,10 @@
+# 빌드 산출물과 로컬 전용 파일은 이미지에 넣지 않는다.
+# src/main/resources/docs의 md 54개는 적재 대상이므로 제외하면 안 된다.
+build/
+.gradle/
+.git/
+.idea/
+dev_docs/
+project_status.md
+.env
+.env.*
