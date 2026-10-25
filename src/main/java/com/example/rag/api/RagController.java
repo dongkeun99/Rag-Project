@@ -1,5 +1,6 @@
 package com.example.rag.api;
 
+import com.example.rag.ai.CloudflareChatStreamer;
 import com.example.rag.ingest.IngestService;
 import com.example.rag.ingest.IngestedFileRepository;
 import org.slf4j.Logger;
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.Disposable;
+import reactor.core.publisher.Flux;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -72,16 +74,20 @@ public class RagController {
     private final int topK;
     private final double similarityThreshold;
     private final String systemPrompt;
+    /** 배포 프로필에만 있다. 없으면 스트리밍도 Spring AI가 맡는다(로컬 Ollama). */
+    private final Optional<CloudflareChatStreamer> cloudflareStreamer;
 
     public RagController(ChatClient.Builder chatClientBuilder,
                          VectorStore vectorStore,
                          IngestService ingestService,
+                         Optional<CloudflareChatStreamer> cloudflareStreamer,
                          @Value("${rag.top-k:8}") int topK,
                          @Value("${rag.similarity-threshold:0.40}") double similarityThreshold,
                          @Value("${rag.cite-sources:false}") boolean citeSources) {
         this.chatClient = chatClientBuilder.build();
         this.vectorStore = vectorStore;
         this.ingestService = ingestService;
+        this.cloudflareStreamer = cloudflareStreamer;
         this.topK = topK;
         this.similarityThreshold = similarityThreshold;
         // 인용 규칙은 중간에 끼운다. 대체 응답("문서에서 찾을 수 없습니다")이 맨 뒤여야 한다.
@@ -89,6 +95,25 @@ public class RagController {
                 ? PROMPT_HEAD + "\n" + CITATION_RULE + "\n" + PROMPT_TAIL
                 : PROMPT_HEAD + "\n" + PROMPT_TAIL;
         log.info("답변 프롬프트: 인용 규칙 {}", citeSources ? "사용" : "미사용");
+    }
+
+    /**
+     * 답변 조각의 출처. 배포에서는 Cloudflare를 직접 읽고, 로컬에서는 Spring AI가 맡는다.
+     *
+     * 배포만 갈라놓은 이유는 project_status.md §11이다 — Cloudflare 스트리밍이 숫자 한
+     * 조각을 JSON 숫자로 보내는데 공식 OpenAI SDK가 그것을 거부해 답변이 중간에서 잘린다.
+     * 자세한 근거는 CloudflareChatStreamer의 주석에 있다. 비스트리밍(/ask)은 양쪽 다
+     * Spring AI를 쓴다 — 전문을 한 번에 받아 이 문제가 없다.
+     */
+    private Flux<String> answerStream(String question, List<Document> documents) {
+        String userMessage = buildUserMessage(question, documents);
+        return cloudflareStreamer
+                .map(streamer -> streamer.stream(systemPrompt, userMessage))
+                .orElseGet(() -> chatClient.prompt()
+                        .system(systemPrompt)
+                        .user(userMessage)
+                        .stream()
+                        .content());
     }
 
     /**
@@ -162,11 +187,7 @@ public class RagController {
 
         // 조각을 이어 붙여 done에 전문을 함께 싣는다. 신호가 순서대로 오므로 동기화는 필요 없다.
         StringBuilder answer = new StringBuilder();
-        Disposable subscription = chatClient.prompt()
-                .system(systemPrompt)
-                .user(buildUserMessage(question, documents))
-                .stream()
-                .content()
+        Disposable subscription = answerStream(question, documents)
                 .subscribe(
                         chunk -> {
                             answer.append(chunk);
