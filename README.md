@@ -33,6 +33,7 @@ RAG(Retrieval-Augmented Generation) 시스템을 처음부터 끝까지 직접 �
 - **출처 표시** — 답변과 함께 근거가 된 파일명, 유사도 점수, 발췌를 보여 줍니다.
 - **질의 화면** — 브라우저에서 질문하고 근거를 하나씩 넘겨 볼 수 있습니다.
 - **스트리밍 답변** — 답변이 다 만들어질 때까지 기다리지 않고 생성되는 대로 글자가 나옵니다.
+- **프로필로 갈아타는 배포** — 로컬은 Ollama와 Docker PostgreSQL, 배포는 Cloudflare Workers AI와 Supabase를 씁니다. 코드는 같고 설정만 다릅니다.
 
 ---
 
@@ -83,7 +84,9 @@ flowchart TB
     E -.-> G
 ```
 
-모든 단계가 로컬에서 돌아갑니다. 임베딩과 답변 생성은 Ollama가, 벡터 저장과 검색은 Docker로 띄운 PostgreSQL(pgvector)이 맡습니다.
+위 그림은 로컬 프로필입니다. 임베딩과 답변 생성은 Ollama가, 벡터 저장과 검색은 Docker로 띄운 PostgreSQL(pgvector)이 맡습니다.
+
+**배포(`prod` 프로필)도 흐름은 같고 맡는 쪽만 바뀝니다** — 임베딩은 Cloudflare의 같은 `bge-m3`, 답변은 `llama-3.3-70b`, 저장소는 Supabase PostgreSQL입니다. 임베딩 모델이 같아서 적재해 둔 벡터를 그대로 씁니다.
 
 ---
 
@@ -184,6 +187,8 @@ docker ps   # rag-postgres가 Up 상태인지 확인
 
 `application.yml`의 `rag.docs-path`를 문서 폴더로 바꾸고, 그 폴더에 pdf · docx · pptx · html · md · txt 파일을 넣습니다.
 
+> 경로에 접두가 없으면 파일시스템으로, `classpath:`를 붙이면 jar 안에서 읽습니다. 저장소에 들어 있는 가이드 문서 54개를 그대로 쓰려면 `classpath:docs`로 두면 됩니다. 배포 프로필이 이 값을 씁니다.
+
 ### 4. 애플리케이션 실행
 
 ```bash
@@ -194,7 +199,7 @@ docker ps   # rag-postgres가 Up 상태인지 확인
 
 브라우저에서 `http://localhost:8080`에 접속해 아래쪽 **적재된 문서**를 펼치고 **새 문서 읽기**를 누른 뒤 질문합니다.
 
-API로 직접 호출할 수도 있습니다. 전체 API 목록은 [2차 개선 – API](dev_docs/2차_개선.md#7-api)에 있습니다.
+API로 직접 호출할 수도 있습니다. 엔드포인트는 여섯 개입니다 — `POST /api/ask` · `POST /api/search` · `GET /api/ask/stream` · `POST /api/ingest` · `GET /api/ingested` · `GET /api/config`. 요청·응답 형식은 [2차 개선 – API](dev_docs/2차_개선.md#7-api)에, 스트리밍 엔드포인트는 나중에 추가돼 [6차 개선](dev_docs/6차_개선.md)에 있습니다.
 
 ```bash
 # 새 문서·바뀐 문서 적재 (전부 다시 적재하려면 ?force=true)

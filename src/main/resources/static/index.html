@@ -627,7 +627,13 @@
             if (timer) { clearInterval(timer); timer = null; }
         }
 
-        /** 답변 안의 [1] 표기를 근거 항목으로 이동하는 버튼으로 바꾼다. */
+        /**
+         * 답변 안의 [1] 표기를 근거 항목으로 이동하는 버튼으로 바꾼다.
+         *
+         * 지금 프롬프트는 인용 번호를 요구하지 않으므로(rag.cite-sources=false) 평소에는
+         * 바꿀 것이 없다. 모델이 스스로 달거나 설정을 켜면 그때 버튼이 된다. 2차에서 규칙을
+         * 뺄 때 이 대비는 남겨 두기로 했다 — 근거는 dev_docs/2차_개선.md.
+         */
         function renderAnswer(text) {
             var notFound = text.indexOf("찾을 수 없습니다") !== -1;
             els.answer.className = notFound ? "notfound" : "";

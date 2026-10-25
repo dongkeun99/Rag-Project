@@ -2,7 +2,7 @@
 
 ## 1. 프로젝트 개요 및 기술 스택
 
-- **목적**: 전자정부 표준프레임워크 문서에 답하는 개인 RAG 챗봇. 문서 적재 → 검색 → 답변(SSE 스트리밍) → 웹 화면까지 돌아간다. 회사 스택(Java·Spring)을 함께 익히는 학습 프로젝트이고, **남은 목표는 호스팅 배포 하나**다. 로컬 프로필은 전부 로컬에서 돌고, 배포 프로필(`prod`)은 관리형 DB와 외부 API를 쓴다.
+- **목적**: 전자정부 표준프레임워크 문서에 답하는 개인 RAG 챗봇. 문서 적재 → 검색 → 답변(SSE 스트리밍) → 웹 화면까지 돌아간다. 회사 스택(Java·Spring)을 함께 익히는 학습 프로젝트다. **최종 목표였던 호스팅 배포는 2026-10-25에 끝났다** — <https://rag-zxay.onrender.com> (Render 무료 플랜). 로컬 프로필은 전부 로컬에서 돌고, 배포 프로필(`prod`)은 관리형 DB와 외부 API를 쓴다. 남은 일은 급하지 않은 품질 개선뿐이고 목록은 `project_status.md`에 있다.
 - **백엔드**: Java 25 (Temurin), Spring Boot 4.1.1, Spring AI 2.0.1, Spring WebMVC, JdbcTemplate (JPA 없음)
 - **프론트엔드**: `src/main/resources/static/index.html` 한 장 (HTML·CSS·JS, 빌드 없음)
 - **데이터베이스**: PostgreSQL + pgvector. 로컬은 Docker 컨테이너 `rag-postgres`(PG 17), 배포는 Supabase(PG 17, 세션 풀러로 접속)
@@ -10,11 +10,13 @@
   - `ingested_file`: 파일별 해시·청크 수 기록. `IngestedFileRepository`가 기동 시 생성
 - **LLM**
   - 로컬: Ollama. 임베딩 `bge-m3` (1024차원), 답변 `exaone3.5:2.4b` (연구/비상업 라이선스)
-  - 배포(`prod`): Cloudflare Workers AI. 임베딩 `@cf/baai/bge-m3` (로컬과 같은 모델이라 적재된 벡터를 그대로 쓴다), 답변 `@cf/meta/llama-3.3-70b-instruct-fp8-fast` (잠정 — 측정으로 확정)
+  - 배포(`prod`): Cloudflare Workers AI. 임베딩 `@cf/baai/bge-m3` (로컬과 같은 모델이라 적재된 벡터를 그대로 쓴다), 답변 `@cf/meta/llama-3.3-70b-instruct-fp8-fast` (2026-10-25 라운드로 확정 — 11번 할루시네이션이 0/3 → 3/3, 대신 3·7·8번이 깨졌다. `dev_docs/8차_개선.md` §6)
+  - **배포 스트리밍은 Spring AI를 타지 않는다.** Cloudflare가 숫자 한 조각의 `content`를 JSON 숫자로 보내 공식 OpenAI SDK가 죽기 때문에 `CloudflareChatStreamer`가 직접 읽는다. 임베딩도 같은 이유(응답에 `usage`가 없음)로 `CloudflareEmbeddingModel`이 직접 호출한다. 비스트리밍(`/api/ask`)과 로컬은 Spring AI 그대로다.
+- **호스팅**: Render 무료 플랜(0.1 CPU / 512MB, Singapore). `Dockerfile`로 빌드하고 구성은 `render.yaml`(Blueprint)에 있다. 15분 무트래픽이면 정지하고 재기동에 1분쯤 걸린다. **Supabase 무료는 7일 저활동이면 일시정지되므로** cron-job.org가 `/api/ingested`를 09~23시 10분 간격으로 때려 둘 다 깨워 둔다.
 - **빌드 도구**: Gradle Wrapper (`gradlew`)
 - **문서**
   - `README.md`: 프로젝트 개요, 기술 스택, 실행 방법만 담는다
-  - `dev_docs/`: 단계별 개발 기록 (`1차_구현.md`, `2차_개선.md`)
+  - `dev_docs/`: 단계별 개발 기록 (`1차_구현.md` ~ `8차_개선.md`). 평가 질문과 측정 방법은 `평가_질문.md`, 자동 측정 보고서는 `측정_원자료/`에 쌓인다
   - `project_status.md`: 현재 상태와 할 일. 로컬 전용 문서
 
 ## 2. 개발 및 검증 명령어
@@ -29,6 +31,9 @@
   - 화면: `http://localhost:8080/`
 - **배포 프로필로 실행**: `SPRING_PROFILES_ACTIVE=prod`만 주면 된다. 비밀값은 프로젝트 루트의 `.env`에서 읽는다 — `application-prod.yml`의 `spring.config.import: optional:file:./.env[.properties]`가 처리하므로 플러그인이나 의존성이 필요 없다. OS 환경변수가 `.env`보다 우선하므로 호스팅에서는 대시보드 값이 덮는다.
   - 기동 로그에서 `profile is active: "prod"`, `Cloudflare 임베딩 사용`, `문서 위치: classpath:docs` 세 줄을 확인한다. 활성 프로필 로그만 보고 적용됐다고 판단하면 안 된다(jar가 낡으면 조용히 기본값으로 돈다).
+  - **포트를 나눠 띄우면 IntelliJ 앱을 건드리지 않아도 된다.** `server.port: ${PORT:8080}`이라 `PORT=8081 SPRING_PROFILES_ACTIVE=prod java -jar build/libs/*.jar`로 prod를, `PORT=8082 java -jar ...`로 로컬 프로필을 따로 띄울 수 있다. 측정도 `-PbaseUrl=http://localhost:8081`로 겨눈다.
+- **배포 이미지 확인**: `docker build -t rag-prod:test .` 로 만들고, 무료 인스턴스와 같은 제약으로 돌려 본다 — `docker run --memory 512m --cpus 0.1 -p 18080:8080 --env-file .env -e PORT=8080 rag-prod:test`. 2026-10-25 실측은 기동 118.7초, 메모리 246MB, 따뜻해진 뒤 검색 739~771ms였다(Render 실기동은 51.4초).
+- **배포**: `main`에 푸시하면 Render가 자동으로 재배포한다. `render.yaml`의 `buildFilter`가 `src/main/**`·빌드 파일·`Dockerfile`·`render.yaml` 변경에만 반응하므로 **문서만 고친 푸시는 배포를 띄우지 않는다.** 적재 대상 문서(`src/main/resources/docs`)는 `src/main/**`에 들어 있어 정상적으로 배포된다.
 - **인프라 확인**
   - DB: `docker ps`로 `rag-postgres`가 Up인지 확인. 꺼져 있으면 프로젝트 루트에서 `docker compose up -d`
     - `docker-compose.yml`의 `name: rag-project`는 지우지 않는다. 이 값이 기존 데이터 볼륨(`rag-project_pgdata`)의 이름을 정하므로, 바뀌면 빈 DB가 새로 만들어진다.
@@ -53,12 +58,14 @@
 | `rag.chunk-size`, `rag.min-chunk-size-chars` | 재시작 후 `/api/ingest?force=true` (해시가 같아 일반 적재는 전부 SKIPPED) |
 | `rag.similarity-threshold`, `rag.top-k` | 재시작만 (조회 시점에 적용) |
 | 답변 모델, LLM 옵션, 시스템 프롬프트 | 재시작만 |
+| `rag.cite-sources` (답변에 `[1]` 인용 번호) | 재시작만. 지금은 양쪽 프로필 다 `false`다 — 사용자가 2차에서 빼 달라고 한 규칙이고, 켜면 숫자만 든 스트리밍 조각이 늘어난다 |
 | 문서 폴더 파일 추가·수정 | `/api/ingest` 또는 화면의 "새 문서 읽기" |
 | 임베딩 모델 | 벡터 차원이 바뀔 수 있어 전체 재적재 |
 
 ## 3. 코딩 컨벤션 및 아키텍처 스타일
 
-- **패키지**: `api`는 컨트롤러와 요청·응답 타입, `ingest`는 문서 적재와 적재 기록, `ai`는 모델 제공처 어댑터. 새 코드는 역할에 맞는 패키지에 둔다.
+- **패키지**: `api`는 컨트롤러와 요청·응답 타입, `ingest`는 문서 적재와 적재 기록, `ai`는 모델 제공처 어댑터(`CloudflareEmbeddingModel`·`CloudflareChatStreamer`, 둘 다 `@Profile("prod")`). 새 코드는 역할에 맞는 패키지에 둔다.
+  - **제공처 어댑터를 손으로 붙이는 기준**: Spring AI로 안 되는 것이 확인됐을 때만이다. 두 번 다 "응답 규격이 OpenAI 표준과 미묘하게 달라 공식 SDK가 거부"가 이유였고, 각 클래스 주석에 그 증거(실제 응답 값)를 남겼다. 새로 붙일 때도 같은 증거를 남긴다.
 - **의존성 주입**: 생성자 주입만 쓴다. 필드 `@Autowired`와 Lombok은 쓰지 않는다.
 - **설정값**: 튜닝할 수 있는 값은 코드에 고정하지 말고 `application.yml`의 `rag:` 블록으로 빼서 `@Value("${rag.xxx:기본값}")`으로 생성자에서 받는다.
   - `rag:` 블록은 `spring:`과 같은 최상위 높이에 둔다. `spring.ai.ollama.chat.options` 안의 `top-k`는 LLM 샘플링 값이지 검색 개수가 아니다.
@@ -106,4 +113,6 @@ Conventional Commits 형식에 한국어 메시지를 쓴다.
   - 무료 티어의 **구체적 한도**(일일 호출 수, 토큰 수 등)를 공식 문서에서 확인하고, 그 한도가 이 프로젝트의 실사용량을 감당하는지 숫자로 따진 뒤 고른다. 무료 티어에서 빠지는 기능이 프로젝트에 필요한지도 함께 본다.
   - 무료로 되는지는 추정하지 말고 실제로 호출해 확인한다. 무료 플랜의 제약(요청 로깅·학습 이용 등)은 숨기지 않고 함께 알린다.
   - 유료가 불가피하다고 판단되면 진행하지 말고 멈춘다. 유료라는 사실과 금액을 명시해 사용자에게 먼저 묻는다.
-  - 현재 구성은 전부 무료다 — DB는 Supabase 무료 티어, 답변과 임베딩은 모두 Cloudflare Workers AI(하루 10,000 뉴런을 둘이 같이 쓴다). OpenRouter도 검토했으나 무료 모델이 하루 50건이고 공용 풀 혼잡(429)이 잦아 쓰지 않는다.
+  - 현재 구성은 전부 무료다 — 호스팅은 Render 무료 플랜, DB는 Supabase 무료 티어, 답변과 임베딩은 모두 Cloudflare Workers AI(하루 10,000 뉴런을 둘이 같이 쓴다), keep-alive는 cron-job.org다. OpenRouter도 검토했으나 무료 모델이 하루 50건이고 공용 풀 혼잡(429)이 잦아 쓰지 않는다.
+  - 탈락시킨 호스팅과 이유는 `dev_docs/8차_개선.md` §3에 있다 — Koyeb(신규 무료 종료)·Fly.io(무료 폐지)·Hugging Face Docker Spaces(유료 필요)·Azure F1(하루 CPU 60분), Cloud Run과 Azure Container Apps는 한도는 넉넉하나 카드가 필요하다.
+  - **측정 한 라운드가 약 3,200뉴런**이다(11문제 × 3회, 9번은 0조각이라 LLM을 안 탄다). 하루 세 라운드까지 된다.

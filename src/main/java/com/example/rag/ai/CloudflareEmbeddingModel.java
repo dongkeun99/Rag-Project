@@ -25,7 +25,9 @@ import java.util.Map;
  * OpenAI Java SDK를 쓰는데 그 SDK가 응답의 {@code usage}를 필수로 본다. Cloudflare의
  * OpenAI 호환 임베딩 응답에는 그 필드가 없어서(키가 object·data·model 셋뿐이다)
  * 호출이 {@code OpenAIInvalidDataException: `usage` is not set}으로 죽는다. 실제로 겪었다.
- * 채팅 쪽 응답에는 usage가 있으므로 채팅은 그대로 Spring AI가 처리한다.
+ * 채팅 응답에는 usage가 있어서 비스트리밍(/api/ask)은 Spring AI가 그대로 처리한다.
+ * 다만 채팅 <b>스트리밍</b>은 다른 이유로 또 걸렸다 — 조각이 숫자 하나일 때 content가 JSON
+ * 숫자로 와서 같은 SDK가 죽는다. 그쪽은 {@link CloudflareChatStreamer}가 맡는다.
  *
  * 모델을 로컬 Ollama와 같은 bge-m3로 두는 것이 핵심이다. 그래야 적재된 819청크와
  * similarity-threshold를 그대로 쓴다. 저장된 벡터와의 코사인이 최저 0.99988로 확인됐다.
