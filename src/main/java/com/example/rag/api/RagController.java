@@ -34,11 +34,24 @@ public class RagController {
      * 작은 모델은 규칙이 늘면 뒤쪽 지시를 흘리므로 규칙 수는 최소로 유지한다.
      * 질문의 틀린 전제를 바로잡는 규칙은 시스템 프롬프트와 질문 바로 뒤 양쪽에서 시도했으나
      * exaone3.5:2.4b에서는 둘 다 듣지 않아 넣지 않는다. 근거는 dev_docs/평가_질문.md 10번.
+     *
+     * 인용 규칙만 rag.cite-sources로 켜고 끈다. 모델에 따라 효과가 반대라서다
+     * (2026-10-25 측정, dev_docs/측정_원자료의 교체후·인용강제·인용강제_로컬 세 보고서).
      */
-    private static final String SYSTEM_PROMPT = """
+    private static final String PROMPT_HEAD = """
             아래 문서 조각을 근거로 질문에 한국어로 답하세요.
 
-            - 문서 조각에 있는 내용으로 답하고, 없는 내용은 지어내지 마세요.
+            - 문서 조각에 있는 내용으로 답하고, 없는 내용은 지어내지 마세요.""";
+
+    /**
+     * 인용 규칙. llama-3.3-70b에서는 문장마다 번호를 달게 하면 조각 하나에 머물지 않고
+     * 여러 조각을 끌어와 7·8번(절차형)이 0/3 → 2/3이 됐고 퇴행은 없었다.
+     * exaone3.5:2.4b에서는 11번이 0/3 그대로라 이득이 없었다.
+     */
+    private static final String CITATION_RULE =
+            "- 각 문장 끝에 근거가 된 조각의 번호를 [1] 형식으로 붙이세요.";
+
+    private static final String PROMPT_TAIL = """
             - 문서에 쓰인 용어를 그대로 사용하세요.
             - 목록을 묻는 질문이면 문서에 있는 항목을 빠짐없이 나열하세요.
             - 답만 간결하게 쓰세요. 문서에 대한 설명, 사과, "문서에 따르면" 같은
@@ -58,17 +71,24 @@ public class RagController {
     private final IngestService ingestService;
     private final int topK;
     private final double similarityThreshold;
+    private final String systemPrompt;
 
     public RagController(ChatClient.Builder chatClientBuilder,
                          VectorStore vectorStore,
                          IngestService ingestService,
                          @Value("${rag.top-k:8}") int topK,
-                         @Value("${rag.similarity-threshold:0.40}") double similarityThreshold) {
+                         @Value("${rag.similarity-threshold:0.40}") double similarityThreshold,
+                         @Value("${rag.cite-sources:false}") boolean citeSources) {
         this.chatClient = chatClientBuilder.build();
         this.vectorStore = vectorStore;
         this.ingestService = ingestService;
         this.topK = topK;
         this.similarityThreshold = similarityThreshold;
+        // 인용 규칙은 중간에 끼운다. 대체 응답("문서에서 찾을 수 없습니다")이 맨 뒤여야 한다.
+        this.systemPrompt = citeSources
+                ? PROMPT_HEAD + "\n" + CITATION_RULE + "\n" + PROMPT_TAIL
+                : PROMPT_HEAD + "\n" + PROMPT_TAIL;
+        log.info("답변 프롬프트: 인용 규칙 {}", citeSources ? "사용" : "미사용");
     }
 
     /**
@@ -98,7 +118,7 @@ public class RagController {
         }
 
         String answer = chatClient.prompt()
-                .system(SYSTEM_PROMPT)
+                .system(systemPrompt)
                 .user(buildUserMessage(request.question(), documents))
                 .call()
                 .content();
@@ -143,7 +163,7 @@ public class RagController {
         // 조각을 이어 붙여 done에 전문을 함께 싣는다. 신호가 순서대로 오므로 동기화는 필요 없다.
         StringBuilder answer = new StringBuilder();
         Disposable subscription = chatClient.prompt()
-                .system(SYSTEM_PROMPT)
+                .system(systemPrompt)
                 .user(buildUserMessage(question, documents))
                 .stream()
                 .content()

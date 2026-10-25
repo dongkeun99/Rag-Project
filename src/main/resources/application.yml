@@ -66,3 +66,8 @@ rag:
   similarity-threshold: 0.50
   chunk-size: 250
   min-chunk-size-chars: 120
+  # 답변 문장마다 [1] 같은 인용 번호를 달게 할지. 로컬은 끈다.
+  # exaone3.5:2.4b에서는 11번(할루시네이션)이 0/3 그대로라 이득이 없었고, 2번이 3/3 → 2/3으로
+  # 한 번 흔들렸다. 규칙이 하나 늘면 작은 모델이 나머지 규칙을 지킬 여력이 준다(2차_개선.md).
+  # 배포 프로필에서는 켠다 — 근거는 application-prod.yml의 같은 값과 dev_docs/측정_원자료.
+  cite-sources: false
