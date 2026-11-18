@@ -52,18 +52,17 @@ spring:
       embedding: none
 
     openai:
-      # 답변과 임베딩을 모두 Cloudflare Workers AI에서 받는다. 하루 10,000 뉴런이 무료이고
-      # 둘이 그 한도를 같이 쓴다. OpenAI 호환 엔드포인트라 base-url만 바꿔 쓴다.
+      # 답변 제공처는 rag.chat.* 에서 받는다. 임베딩(rag.cloudflare.*)과 분리해 둔 이유는
+      # 둘의 제약이 다르기 때문이다 — 임베딩은 적재된 819청크의 벡터 공간에 묶여
+      # bge-m3를 벗어날 수 없지만, 답변 모델은 측정 결과에 따라 갈아끼울 수 있다.
+      # 기본값이 Cloudflare라 아무것도 주지 않으면 지금까지와 똑같이 돈다.
       #
       # **OpenRouter에서 옮겨 왔다.** 무료 모델이 하루 50건으로 묶이고(측정으로 확인),
       # 그와 별개로 공용 풀 혼잡 때문에 `temporarily rate-limited upstream` 429가 잦았다.
       # 실제로 gemma-4-31b가 3회 연속 429로 막혀 대체 모델로 넘어가는 것을 봤다.
-      # Cloudflare는 전용 할당이라 혼잡이 없고, 제공처가 하나라 키도 base-url도 하나다.
-      #
-      # 계정 ID가 경로에 들어간다. base-url에 /v1까지 적는다 — Spring AI 2.0은 공식
-      # OpenAI Java SDK를 쓰고 기본값이 https://api.openai.com/v1 로 /v1을 포함한다.
-      base-url: ${rag.cloudflare.base-url}
-      api-key: ${rag.cloudflare.api-token}
+      # Cloudflare는 전용 할당이라 혼잡이 없다.
+      base-url: ${rag.chat.base-url}
+      api-key: ${rag.chat.api-key}
       chat:
         options:
           # 10번(틀린 전제 교정)과 11번(배치처리 할루시네이션)이 모델 교체의 지표다.
@@ -80,13 +79,17 @@ spring:
           #
           # 비용은 질문 1건에 약 32~97뉴런이라 하루 100건 이상 된다. 측정 한 라운드가
           # 33콜(11문제 × 3회, 9번은 0조각이라 LLM을 안 탄다)이므로 여유가 있다.
-          model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+          # 제공처와 함께 움직여야 하는 값이라 rag.chat.* 과 같이 환경변수로 받는다.
+          # base-url만 바꾸고 이 값을 그대로 두면 남의 제공처에 Cloudflare 모델 이름을
+          # 보내서 404로 죽는다. 기본값이 Cloudflare라 CHAT_* 셋을 다 비우면 지금 구성이다.
+          model: "${CHAT_MODEL:@cf/meta/llama-3.3-70b-instruct-fp8-fast}"
           temperature: 0.2
           # 로컬의 num-predict 400과 같은 뜻. 300에서는 절차형 답변(7·8번)이 끊겼다.
           # 근거는 dev_docs/7차_개선.md §5.
           max-tokens: 400
       # embedding 블록은 없다. spring.ai.model.embedding=none이고
       # CloudflareEmbeddingModel이 rag.cloudflare.* 를 받아 직접 호출한다.
+      # 답변 제공처를 바꿔도 이 경로는 건드리지 않는다 — 위 rag.chat.* 설명 참조.
 
     vectorstore:
       pgvector:
@@ -98,8 +101,32 @@ spring:
         distance-type: COSINE_DISTANCE
 
 rag:
-  # Cloudflare Workers AI. 답변(Spring AI가 OpenAI 호환으로 호출)과 임베딩
-  # (CloudflareEmbeddingModel이 직접 호출)이 이 값을 같이 쓴다.
+  # 답변 제공처. 비스트리밍(Spring AI)과 스트리밍(CloudflareChatStreamer)이 이 값을 같이
+  # 읽는다. 한쪽만 바뀌면 화면과 측정이 서로 다른 제공처로 도는 사고가 나므로 키를 하나로 묶었다.
+  #
+  # **기본값은 임베딩과 같은 Cloudflare다.** 즉 아무것도 주지 않으면 2026-10-25 구성 그대로다.
+  # 다른 제공처를 재 볼 때는 환경변수 둘을 .env에 넣고 모델 이름만 바꾼다. 예를 들어
+  # Gemini의 OpenAI 호환 엔드포인트라면
+  #   CHAT_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+  #   CHAT_API_KEY=<AI Studio 키>
+  # 에 spring.ai.openai.chat.options.model을 gemini-… 로 바꾸면 된다. YAML을 고치지 않고
+  # .env만으로 바꿀 수 있게 환경변수를 받는다.
+  #
+  # **둘은 반드시 같이 바꾼다.** base-url만 바꾸면 남의 제공처에 Cloudflare 토큰을 보낸다.
+  # 기동 로그의 "답변 제공처:" 한 줄에 host와 model이 같이 찍히므로 거기서 확인한다.
+  #
+  # **.env에 CHAT_BASE_URL= 을 빈 값으로 두지 않는다.** placeholder 기본값은 키가 없을 때만
+  # 걸리고 빈 문자열은 값이 있는 것으로 읽혀서, base-url이 빈 채로 기동한다.
+  # 쓰지 않을 때는 줄 자체를 주석 처리한다(.env.example이 그렇게 돼 있다).
+  #
+  # base-url에 /v1까지(제공처에 따라 /v1beta/openai까지) 적는다 — Spring AI 2.0은 공식
+  # OpenAI Java SDK를 쓰고 기본값이 https://api.openai.com/v1 로 경로를 포함한다.
+  chat:
+    base-url: ${CHAT_BASE_URL:${rag.cloudflare.base-url}}
+    api-key: ${CHAT_API_KEY:${rag.cloudflare.api-token}}
+
+  # Cloudflare Workers AI. 임베딩(CloudflareEmbeddingModel이 직접 호출)이 쓰고,
+  # 답변 제공처를 따로 주지 않으면 위 rag.chat.* 의 기본값으로도 쓰인다.
   # base-url 경로에 계정 ID가 들어가고, /v1까지 적는다.
   cloudflare:
     base-url: https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai/v1

@@ -15,6 +15,7 @@ import reactor.core.scheduler.Schedulers;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -33,8 +34,14 @@ import java.util.Map;
  * 비스트리밍(/api/ask)은 전문을 한 번에 받아 이 문제가 없으므로 Spring AI가 그대로 맡는다.
  * 로컬 프로필도 해당 없다(Ollama는 Spring AI 자체 클라이언트를 쓴다). 그래서 @Profile("prod")다.
  *
- * 모델·온도·길이 상한은 spring.ai.openai.chat.options를 그대로 읽는다. 값을 여기에 따로
+ * 제공처·모델·온도·길이 상한을 모두 비스트리밍 경로와 같은 키에서 읽는다 — 제공처는
+ * {@code rag.chat.*}, 나머지는 {@code spring.ai.openai.chat.options}다. 값을 여기에 따로
  * 두면 비스트리밍 경로와 어긋나서, 화면과 측정이 다른 설정으로 도는 사고가 난다.
+ *
+ * <b>설정 키는 제공처 중립이지만 이 파서는 Cloudflare 응답을 전제로 한다.</b>
+ * {@code rag.chat.base-url}을 다른 제공처로 돌리면 이 클래스가 그 제공처의 스트림을 읽게
+ * 되므로, 먼저 그 제공처가 Spring AI 스트리밍으로 되는지 확인한다. 되면 이 클래스를 거치지
+ * 않는 것이 맞다 — 손으로 붙인 어댑터는 Spring AI로 안 되는 것이 확인됐을 때만 쓴다.
  */
 @Component
 @Profile("prod")
@@ -53,21 +60,25 @@ public class CloudflareChatStreamer {
 
     public CloudflareChatStreamer(RestClient.Builder builder,
                                   ObjectMapper objectMapper,
-                                  @Value("${rag.cloudflare.base-url}") String baseUrl,
-                                  @Value("${rag.cloudflare.api-token}") String apiToken,
+                                  @Value("${rag.chat.base-url}") String baseUrl,
+                                  @Value("${rag.chat.api-key}") String apiKey,
                                   @Value("${spring.ai.openai.chat.options.model}") String model,
                                   @Value("${spring.ai.openai.chat.options.temperature:0.2}") double temperature,
                                   @Value("${spring.ai.openai.chat.options.max-tokens:400}") int maxTokens) {
         this.client = builder
                 .baseUrl(baseUrl)
-                .defaultHeader("Authorization", "Bearer " + apiToken)
+                .defaultHeader("Authorization", "Bearer " + apiKey)
                 .defaultHeader("Content-Type", MediaType.APPLICATION_JSON_VALUE)
                 .build();
         this.objectMapper = objectMapper;
         this.model = model;
         this.temperature = temperature;
         this.maxTokens = maxTokens;
-        log.info("Cloudflare 스트리밍 사용: model={}, maxTokens={}", model, maxTokens);
+        // host를 같이 찍는다. 제공처와 모델이 어긋난 채로 도는 것(예: Cloudflare 토큰으로
+        // 다른 제공처를 부르는 것)은 기동 로그에서 바로 보이지 않으면 알아채기 어렵다.
+        // 키는 찍지 않는다.
+        log.info("답변 제공처: host={}, model={}, maxTokens={}",
+                URI.create(baseUrl).getHost(), model, maxTokens);
     }
 
     /**
