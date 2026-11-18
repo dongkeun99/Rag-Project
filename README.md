@@ -8,7 +8,7 @@ RAG(Retrieval-Augmented Generation) 시스템을 처음부터 끝까지 직접 �
 
 > 무료 플랜이라 15분간 요청이 없으면 서버가 잠듭니다. 첫 질문은 깨어나는 데 1분쯤 걸릴 수 있습니다.
 
-> 구현 과정과 개선 내용은 [`dev_docs`](dev_docs/)에 단계별로 정리했습니다. → [1차 구현](dev_docs/1차_구현.md) · [2차 개선](dev_docs/2차_개선.md) · [3차 개선](dev_docs/3차_개선.md) · [4차 개선](dev_docs/4차_개선.md) · [5차 개선](dev_docs/5차_개선.md) · [6차 개선](dev_docs/6차_개선.md) · [7차 개선](dev_docs/7차_개선.md) · [8차 개선](dev_docs/8차_개선.md)
+> 구현 과정과 개선 내용은 [`dev_docs`](dev_docs/)에 단계별로 정리했습니다. → [1차 구현](dev_docs/1차_구현.md) · [2차 개선](dev_docs/2차_개선.md) · [3차 개선](dev_docs/3차_개선.md) · [4차 개선](dev_docs/4차_개선.md) · [5차 개선](dev_docs/5차_개선.md) · [6차 개선](dev_docs/6차_개선.md) · [7차 개선](dev_docs/7차_개선.md) · [8차 개선](dev_docs/8차_개선.md) · [9차 개선](dev_docs/9차_개선.md)
 
 ---
 
@@ -262,6 +262,7 @@ Cloudflare 임베딩 사용: model=@cf/baai/bge-m3, dimensions=1024
 | [6차 개선](dev_docs/6차_개선.md) | SSE 스트리밍 답변, 화면의 중복 검색 제거 |
 | [7차 개선](dev_docs/7차_개선.md) | 답변 지연을 prefill/decode로 분해해 측정, 적재 시 이미지 링크·외톨이 목록 번호 제거, `num-predict` 400 |
 | [8차 개선](dev_docs/8차_개선.md) | Render 무료 플랜 배포(Supabase · Cloudflare Workers AI), keep-alive 크론, 답변 모델 교체를 12문항으로 확정, 스트리밍이 숫자에서 끊기던 버그 수정 |
+| [9차 개선](dev_docs/9차_개선.md) | 답변 제공처 설정을 임베딩에서 분리(`rag.chat.*`), Gemini 무료 티어 실측 — `3.8-flash`는 용량 부족으로 탈락, `3.5-flash-lite`가 3·8번 회복 |
 
 각 문서에 구현 과정, 트러블슈팅, 실행 결과, 배운 점을 정리했습니다.
 

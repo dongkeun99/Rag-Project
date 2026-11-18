@@ -30,7 +30,8 @@
   - 기동 로그에서 `Started RagApplication`과 `청킹 설정: chunkSize=250 토큰, minChunkSizeChars=120`을 확인한다.
   - 화면: `http://localhost:8080/`
 - **배포 프로필로 실행**: `SPRING_PROFILES_ACTIVE=prod`만 주면 된다. 비밀값은 프로젝트 루트의 `.env`에서 읽는다 — `application-prod.yml`의 `spring.config.import: optional:file:./.env[.properties]`가 처리하므로 플러그인이나 의존성이 필요 없다. OS 환경변수가 `.env`보다 우선하므로 호스팅에서는 대시보드 값이 덮는다.
-  - 기동 로그에서 `profile is active: "prod"`, `Cloudflare 임베딩 사용`, `문서 위치: classpath:docs` 세 줄을 확인한다. 활성 프로필 로그만 보고 적용됐다고 판단하면 안 된다(jar가 낡으면 조용히 기본값으로 돈다).
+  - 기동 로그에서 `profile is active: "prod"`, `답변 제공처: host=…, model=…`, `Cloudflare 임베딩 사용`, `문서 위치: classpath:docs` 네 줄을 확인한다. 활성 프로필 로그만 보고 적용됐다고 판단하면 안 된다(jar가 낡으면 조용히 기본값으로 돈다).
+  - **답변 제공처는 `.env`의 `CHAT_BASE_URL`·`CHAT_API_KEY`·`CHAT_MODEL` 세 줄로 갈아끼운다**(없으면 Cloudflare). 임베딩은 영향을 받지 않는다 — 적재된 819청크가 `bge-m3` 1024차원에 묶여 제공처가 고정이다. **셋은 반드시 같이 바꾼다**(하나만 바꾸면 남의 제공처에 Cloudflare 토큰이나 모델 이름이 날아간다). 빈 값으로 두면 안 되고 줄을 주석 처리한다 — placeholder 기본값은 키가 없을 때만 걸린다. 근거와 실측은 `dev_docs/9차_개선.md`.
   - **포트를 나눠 띄우면 IntelliJ 앱을 건드리지 않아도 된다.** `server.port: ${PORT:8080}`이라 `PORT=8081 SPRING_PROFILES_ACTIVE=prod java -jar build/libs/*.jar`로 prod를, `PORT=8082 java -jar ...`로 로컬 프로필을 따로 띄울 수 있다. 측정도 `-PbaseUrl=http://localhost:8081`로 겨눈다.
 - **배포 이미지 확인**: `docker build -t rag-prod:test .` 로 만들고, 무료 인스턴스와 같은 제약으로 돌려 본다 — `docker run --memory 512m --cpus 0.1 -p 18080:8080 --env-file .env -e PORT=8080 rag-prod:test`. 2026-10-25 실측은 기동 118.7초, 메모리 246MB, 따뜻해진 뒤 검색 739~771ms였다(Render 실기동은 51.4초).
 - **배포**: `main`에 푸시하면 Render가 자동으로 재배포한다. `render.yaml`의 `buildFilter`가 `src/main/**`·빌드 파일·`Dockerfile`·`render.yaml` 변경에만 반응하므로 **문서만 고친 푸시는 배포를 띄우지 않는다.** 적재 대상 문서(`src/main/resources/docs`)는 `src/main/**`에 들어 있어 정상적으로 배포된다.
@@ -58,6 +59,7 @@
 | `rag.chunk-size`, `rag.min-chunk-size-chars` | 재시작 후 `/api/ingest?force=true` (해시가 같아 일반 적재는 전부 SKIPPED) |
 | `rag.similarity-threshold`, `rag.top-k` | 재시작만 (조회 시점에 적용) |
 | 답변 모델, LLM 옵션, 시스템 프롬프트 | 재시작만 |
+| 답변 제공처 (`CHAT_BASE_URL`·`CHAT_API_KEY`·`CHAT_MODEL`) | 재시작만. 셋을 같이 바꾸고 기동 로그의 `답변 제공처:` 줄로 확인한다 |
 | `rag.cite-sources` (답변에 `[1]` 인용 번호) | 재시작만. 지금은 양쪽 프로필 다 `false`다 — 사용자가 2차에서 빼 달라고 한 규칙이고, 켜면 숫자만 든 스트리밍 조각이 늘어난다 |
 | 문서 폴더 파일 추가·수정 | `/api/ingest` 또는 화면의 "새 문서 읽기" |
 | 임베딩 모델 | 벡터 차원이 바뀔 수 있어 전체 재적재 |
