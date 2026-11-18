@@ -21,7 +21,7 @@ import java.util.Objects;
  * 평가 질문 세트를 측정해 보고서를 남긴다. 손으로 curl 36번 돌리고 표에 옮겨 적던 일을 대체한다.
  *
  * 떠 있는 앱과 Ollama가 필요하므로 @Tag("eval")로 묶어 ./gradlew test에서는 제외한다.
- * 실행: ./gradlew evalReport [-Prounds=3] [-Ponly=2,11] [-Plabel=인용강제]
+ * 실행: ./gradlew evalReport [-Prounds=3] [-Ponly=2,11] [-Plabel=인용강제] [-Pdelay=3]
  *
  * 자동 판정은 키워드 기반 1차 판정일 뿐이다. 답변 전문을 함께 남기므로 의미 판정은 사람이 한다.
  */
@@ -34,6 +34,8 @@ class EvalReportTest {
     private static final int ROUNDS = Integer.parseInt(System.getProperty("eval.rounds", "3"));
     private static final String ONLY = System.getProperty("eval.only", "");
     private static final String LABEL = System.getProperty("eval.label", "");
+    /** 답변 호출 사이에 쉬는 초. 외부 제공처의 분당 요청 수(RPM) 한도를 넘지 않게 하는 용도다. */
+    private static final int DELAY_SECONDS = Integer.parseInt(System.getProperty("eval.delaySeconds", "0"));
 
     /** 답변 하나에 수 분이 걸릴 수 있다. 첫 질문은 모델을 메모리에 올리느라 더 걸린다. */
     private static final Duration READ_TIMEOUT = Duration.ofMinutes(10);
@@ -66,11 +68,16 @@ class EvalReportTest {
 
         // 2) 답변은 회차 단위로 전부 돌린다. 프롬프트 캐시 영향을 회차로 묶어 두려는 것이다.
         List<List<Answer>> rounds = new ArrayList<>();
+        // 회차 경계도 같은 분 안에 들 수 있으므로 간격은 회차를 가로질러 센다.
+        int asked = 0;
         for (int round = 1; round <= ROUNDS; round++) {
             log("");
             log("[답변 %d/%d회차] POST /api/ask".formatted(round, ROUNDS));
             List<Answer> answers = new ArrayList<>();
             for (QuestionSet.Question question : questions) {
+                if (asked++ > 0) {
+                    pace();
+                }
                 long began = System.nanoTime();
                 // 한 문항이 실패해도 측정을 계속한다. 36회를 수십 분 돌린 뒤 보고서를 통째로
                 // 잃으면 안 된다. 실패는 답변 자리에 그대로 남겨 사람이 보게 한다.
@@ -130,6 +137,24 @@ class EvalReportTest {
         }
     }
 
+    /**
+     * 답변 호출 사이를 벌린다. 외부 제공처의 분당 요청 수(RPM) 한도에 걸리지 않게 하는 용도다.
+     * Ollama는 한 건에 30초가 걸려 필요가 없었지만, 외부 API는 2초면 끝나 분당 30건이 나간다.
+     * 예를 들어 gemini-3.5-flash-lite는 15 RPM이므로 3초를 주면 건당 5초, 분당 12건으로 내려간다.
+     * 검색(/api/search)은 임베딩 제공처를 타므로 답변 호출만 늦춘다. 기본값 0이면 쉬지 않는다.
+     */
+    private static void pace() {
+        if (DELAY_SECONDS <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(Duration.ofSeconds(DELAY_SECONDS));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("측정이 중단됐다", e);
+        }
+    }
+
     /** -Ponly=2,11 로 일부 문항만 돌린다. 규칙 하나를 넣고 특정 문항만 빨리 볼 때 쓴다. */
     private List<QuestionSet.Question> select(List<QuestionSet.Question> all) {
         if (ONLY.isBlank()) {
@@ -166,13 +191,14 @@ class EvalReportTest {
                 | 코퍼스 | 파일 %d개 / %d청크 |
                 | 질문 세트 기준 | %s |
                 | 문항 | %d개 |
-                | 회차 | %d회 |
+                | 회차 | %d회%s |
 
                 자동 판정은 키워드 1차 판정이다. 의미 판정은 아래 **답변 전문**을 보고 확정하고,
                 3회 중 몇 번 맞았는지로 적는다. 1회 성공을 해결로 적지 않는다.
 
                 """.formatted(BASE_URL, commit(), config.topK(), config.similarityThreshold(),
-                files, chunks, set.corpus(), questions.size(), ROUNDS));
+                files, chunks, set.corpus(), questions.size(), ROUNDS,
+                DELAY_SECONDS > 0 ? " (호출 간격 %d초)".formatted(DELAY_SECONDS) : ""));
 
         out.append("## 검색 (POST /api/search, 1회)\n\n");
         out.append("| # | 유형 | 조각 | 1위 점수 | 근거 문서 순위 | %s |\n".formatted(set.watchedSource()));

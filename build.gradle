@@ -53,7 +53,7 @@ tasks.named('test') {
 }
 
 // 평가 질문 세트 측정. 떠 있는 앱을 때려 dev_docs/측정_원자료에 보고서를 쓴다.
-// 예: ./gradlew evalReport -Prounds=3 -Plabel=인용강제 -Ponly=2,11
+// 예: ./gradlew evalReport -Prounds=3 -Plabel=인용강제 -Ponly=2,11 -Pdelay=3
 tasks.register('evalReport', Test) {
 	group = 'verification'
 	description = '평가 질문을 회차만큼 측정해 dev_docs/측정_원자료에 보고서를 남긴다'
@@ -73,4 +73,7 @@ tasks.register('evalReport', Test) {
 	systemProperty 'eval.only', findProperty('only') ?: ''
 	systemProperty 'eval.label', findProperty('label') ?: ''
 	systemProperty 'eval.baseUrl', findProperty('baseUrl') ?: 'http://localhost:8080'
+	// -Pdelay=3 은 답변 호출 사이에 3초를 쉰다. 외부 제공처의 RPM 한도를 넘지 않게 하는 값이고,
+	// 기본값 0이면 지금까지처럼 연달아 쏜다(Ollama는 한 건에 30초라 필요가 없었다).
+	systemProperty 'eval.delaySeconds', findProperty('delay') ?: '0'
 }
